@@ -111,6 +111,15 @@ impl Checker {
             },
         );
 
+        // Register built-in function: len(s: str) -> i64
+        self.functions.insert(
+            "len".to_string(),
+            FuncInfo {
+                param_types: vec![Type::Str],
+                return_type: Type::I64,
+            },
+        );
+
         // Second pass: check each function body
         for func in &program.items {
             self.check_function(func)?;

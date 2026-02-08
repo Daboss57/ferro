@@ -1,0 +1,1 @@
+fn main() { "Hello from pipes!" |> print; }

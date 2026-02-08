@@ -292,3 +292,72 @@ fn test_unknown_type() {
         "unknown type 'float'",
     );
 }
+
+// ── Strings (Phase 7) ──────────────────────────────────
+
+#[test]
+fn test_string_variable_valid() {
+    check_ok(r#"fn main() { let s: str = "hello"; print(s); }"#);
+}
+
+#[test]
+fn test_string_param_valid() {
+    check_ok(r#"fn greet(name: str) { print(name); } fn main() { greet("world"); }"#);
+}
+
+#[test]
+fn test_string_return_valid() {
+    check_ok(r#"fn greeting() -> str { return "hi"; } fn main() { print(greeting()); }"#);
+}
+
+#[test]
+fn test_string_implicit_return_valid() {
+    check_ok(r#"fn greeting() -> str { "hi" } fn main() { print(greeting()); }"#);
+}
+
+#[test]
+fn test_print_string_valid() {
+    check_ok(r#"fn main() { print("hello"); }"#);
+}
+
+#[test]
+fn test_print_bool_valid() {
+    check_ok("fn main() { print(true); print(false); }");
+}
+
+#[test]
+fn test_string_type_mismatch() {
+    check_err(
+        r#"fn main() { let x: i64 = "oops"; }"#,
+        "type mismatch",
+    );
+}
+
+#[test]
+fn test_string_arithmetic_error() {
+    check_err(
+        r#"fn main() { let x: str = "a" + "b"; }"#,
+        "cannot apply",
+    );
+}
+
+#[test]
+fn test_len_valid() {
+    check_ok(r#"fn main() { let n: i64 = len("hello"); print(n); }"#);
+}
+
+#[test]
+fn test_len_wrong_type() {
+    check_err(
+        "fn main() { len(42); }",
+        "expected 'str', got 'i64'",
+    );
+}
+
+#[test]
+fn test_len_wrong_arg_count() {
+    check_err(
+        r#"fn main() { len("a", "b"); }"#,
+        "takes 1 argument(s), got 2",
+    );
+}

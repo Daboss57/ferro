@@ -1,0 +1,28 @@
+// Phase 7: Strings & I/O demo
+
+fn greet(name: str) {
+    print(name);
+}
+
+fn main() {
+    // Print a string literal
+    print("Hello, World!");
+
+    // String variable
+    let lang: str = "Ferro";
+    print(lang);
+
+    // Pass string to a function
+    greet("compiler");
+
+    // String length
+    let n: i64 = len("Ferro");
+    print(n);
+
+    // Print booleans
+    print(true);
+    print(false);
+
+    // Print integer (still works!)
+    print(42);
+}

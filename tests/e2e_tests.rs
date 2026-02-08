@@ -317,3 +317,131 @@ fn test_e2e_implicit_return_and_pipe() {
         "21"
     );
 }
+
+// ── Strings & I/O (Phase 7) ────────────────────────────
+
+#[test]
+fn test_e2e_print_string_literal() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print("Hello, World!"); }"#),
+        "Hello, World!"
+    );
+}
+
+#[test]
+fn test_e2e_string_variable() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { let s: str = "Ferro"; print(s); }"#),
+        "Ferro"
+    );
+}
+
+#[test]
+fn test_e2e_string_function_param() {
+    assert_eq!(
+        compile_and_run(
+            r#"fn greet(name: str) { print(name); }
+               fn main() { greet("world"); }"#
+        ),
+        "world"
+    );
+}
+
+#[test]
+fn test_e2e_string_return() {
+    assert_eq!(
+        compile_and_run(
+            r#"fn greeting() -> str { "hello" }
+               fn main() { print(greeting()); }"#
+        ),
+        "hello"
+    );
+}
+
+#[test]
+fn test_e2e_string_pipe() {
+    assert_eq!(
+        compile_and_run(
+            r#"fn main() { "piped" |> print; }"#
+        ),
+        "piped"
+    );
+}
+
+#[test]
+fn test_e2e_len_builtin() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print(len("hello")); }"#),
+        "5"
+    );
+}
+
+#[test]
+fn test_e2e_len_empty_string() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print(len("")); }"#),
+        "0"
+    );
+}
+
+#[test]
+fn test_e2e_len_variable() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { let s: str = "Ferro!"; print(len(s)); }"#),
+        "6"
+    );
+}
+
+#[test]
+fn test_e2e_len_in_arithmetic() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print(len("abc") + len("de")); }"#),
+        "5"
+    );
+}
+
+#[test]
+fn test_e2e_print_bool_true() {
+    assert_eq!(
+        compile_and_run("fn main() { print(true); }"),
+        "true"
+    );
+}
+
+#[test]
+fn test_e2e_print_bool_false() {
+    assert_eq!(
+        compile_and_run("fn main() { print(false); }"),
+        "false"
+    );
+}
+
+#[test]
+fn test_e2e_print_bool_expression() {
+    assert_eq!(
+        compile_and_run("fn main() { print(3 < 5); }"),
+        "true"
+    );
+}
+
+#[test]
+fn test_e2e_print_bool_variable() {
+    assert_eq!(
+        compile_and_run("fn main() { let flag: bool = true; print(flag); }"),
+        "true"
+    );
+}
+
+#[test]
+fn test_e2e_mixed_prints() {
+    assert_eq!(
+        compile_and_run(
+            r#"fn main() {
+                print(42);
+                print("hello");
+                print(true);
+            }"#
+        ),
+        "42\nhello\ntrue"
+    );
+}

@@ -17,6 +17,15 @@ use std::fmt::Write;
 
 use crate::ast::*;
 
+/// Simple type tag so codegen knows how to print / handle each value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ValType {
+    Int,
+    Bool,
+    Str,
+    Void,
+}
+
 /// Code generator state.
 pub struct Codegen {
     /// The output assembly string.
@@ -25,10 +34,12 @@ pub struct Codegen {
     label_counter: usize,
     /// String literals collected during codegen, emitted in .data section.
     string_literals: Vec<String>,
-    /// Maps variable name → stack offset from RBP (negative).
-    locals: HashMap<String, i64>,
+    /// Maps variable name → (stack offset from RBP, type tag).
+    locals: HashMap<String, (i64, ValType)>,
     /// Next available stack offset for a new local variable.
     stack_offset: i64,
+    /// Maps function name → return type (for infer_type on Call exprs).
+    func_return_types: HashMap<String, ValType>,
 }
 
 impl Codegen {
@@ -39,6 +50,7 @@ impl Codegen {
             string_literals: Vec::new(),
             locals: HashMap::new(),
             stack_offset: 0,
+            func_return_types: HashMap::new(),
         }
     }
 
@@ -49,10 +61,10 @@ impl Codegen {
     }
 
     /// Allocate a local variable on the stack, return its RBP offset.
-    fn alloc_local(&mut self, name: &str) -> i64 {
+    fn alloc_local(&mut self, name: &str, ty: ValType) -> i64 {
         self.stack_offset -= 8;
         let offset = self.stack_offset;
-        self.locals.insert(name.to_string(), offset);
+        self.locals.insert(name.to_string(), (offset, ty));
         offset
     }
 
@@ -66,10 +78,61 @@ impl Codegen {
         writeln!(self.output, "{}:", label).unwrap();
     }
 
+    // ── Type inference (for print dispatch) ────────────────
+
+    /// Determine the runtime type of an expression.
+    /// The semantic checker already validated everything — this is just
+    /// so codegen knows which printf format / C function to use.
+    fn infer_type(&self, expr: &Expr) -> ValType {
+        match expr {
+            Expr::IntLit { .. } => ValType::Int,
+            Expr::BoolLit { .. } => ValType::Bool,
+            Expr::StringLit { .. } => ValType::Str,
+            Expr::Ident { name, .. } => {
+                self.locals.get(name.as_str()).map(|l| l.1).unwrap_or(ValType::Int)
+            }
+            Expr::UnaryOp { op, .. } => match op {
+                UnaryOp::Neg => ValType::Int,
+                UnaryOp::Not => ValType::Bool,
+            },
+            Expr::BinaryOp { op, .. } => match op {
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => ValType::Int,
+                _ => ValType::Bool,
+            },
+            Expr::Call { name, .. } => {
+                if name == "print" {
+                    ValType::Void
+                } else if name == "len" {
+                    ValType::Int
+                } else {
+                    self.func_return_types.get(name.as_str()).copied().unwrap_or(ValType::Int)
+                }
+            }
+        }
+    }
+
+    /// Convert a type-name string (from the AST) to a ValType.
+    fn valtype_from_name(name: &str) -> ValType {
+        match name {
+            "i64"  => ValType::Int,
+            "bool" => ValType::Bool,
+            "str"  => ValType::Str,
+            _      => ValType::Int,
+        }
+    }
+
     // ── Program ─────────────────────────────────────────
 
     /// Generate assembly for an entire program.
     pub fn generate(mut self, program: &Program) -> String {
+        // Collect function return types so infer_type can resolve Call exprs.
+        for func in &program.items {
+            let rt = match &func.return_type {
+                Some(n) => Self::valtype_from_name(n),
+                None => ValType::Void,
+            };
+            self.func_return_types.insert(func.name.clone(), rt);
+        }
         // Emit text section
         writeln!(self.output, "    .section .text").unwrap();
 
@@ -115,7 +178,8 @@ impl Codegen {
         // Store parameters into local variables
         let param_regs = ["%rcx", "%rdx", "%r8", "%r9"];
         for (i, param) in func.params.iter().enumerate() {
-            let offset = self.alloc_local(&param.name);
+            let ty = Self::valtype_from_name(&param.type_name);
+            let offset = self.alloc_local(&param.name, ty);
             if i < param_regs.len() {
                 self.emit(&format!("movq {}, {}(%rbp)", param_regs[i], offset));
             }
@@ -149,16 +213,18 @@ impl Codegen {
     fn gen_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Let { name, value, .. } => {
+                // Determine the type of the value (for print dispatch later)
+                let ty = self.infer_type(value);
                 // Evaluate the value → RAX
                 self.gen_expr(value);
                 // Allocate stack slot and store
-                let offset = self.alloc_local(name);
+                let offset = self.alloc_local(name, ty);
                 self.emit(&format!("movq %rax, {}(%rbp)", offset));
             }
 
             Stmt::Assign { name, value, .. } => {
                 self.gen_expr(value);
-                let offset = self.locals[name];
+                let offset = self.locals[name].0;
                 self.emit(&format!("movq %rax, {}(%rbp)", offset));
             }
 
@@ -252,7 +318,7 @@ impl Codegen {
             }
 
             Expr::Ident { name, span: _ } => {
-                let offset = self.locals[name];
+                let offset = self.locals[name].0;
                 self.emit(&format!("movq {}(%rbp), %rax", offset));
             }
 
@@ -342,16 +408,56 @@ impl Codegen {
             }
 
             Expr::Call { name, args, .. } => {
-                // Built-in: print — calls printf with "%lld\n" format for ints
+                // ── Built-in: print ─────────────────────────────
                 if name == "print" {
+                    let arg_type = self.infer_type(&args[0]);
                     self.gen_expr(&args[0]);
-                    // Move value to RDX (2nd arg), format string to RCX (1st arg)
-                    self.emit("movq %rax, %rdx");
-                    let fmt_idx = self.string_literals.len();
-                    self.string_literals.push("%lld\\n".to_string());
-                    self.emit(&format!("leaq .Lstr_{}(%rip), %rcx", fmt_idx));
-                    // Shadow space (32 bytes) is already reserved in our frame
-                    self.emit("call printf");
+
+                    match arg_type {
+                        ValType::Int => {
+                            // printf("%lld\n", value)
+                            self.emit("movq %rax, %rdx");
+                            let fmt_idx = self.string_literals.len();
+                            self.string_literals.push("%lld\\n".to_string());
+                            self.emit(&format!("leaq .Lstr_{}(%rip), %rcx", fmt_idx));
+                            self.emit("call printf");
+                        }
+                        ValType::Str => {
+                            // puts(string_ptr)  — prints string + newline
+                            self.emit("movq %rax, %rcx");
+                            self.emit("call puts");
+                        }
+                        ValType::Bool => {
+                            // Branch: print "true" or "false"
+                            let false_label = self.new_label("pf");
+                            let end_label = self.new_label("pe");
+                            self.emit("testq %rax, %rax");
+                            self.emit(&format!("je {}", false_label));
+                            // true branch
+                            let true_idx = self.string_literals.len();
+                            self.string_literals.push("true".to_string());
+                            self.emit(&format!("leaq .Lstr_{}(%rip), %rcx", true_idx));
+                            self.emit(&format!("jmp {}", end_label));
+                            // false branch
+                            self.emit_label(&false_label);
+                            let false_idx = self.string_literals.len();
+                            self.string_literals.push("false".to_string());
+                            self.emit(&format!("leaq .Lstr_{}(%rip), %rcx", false_idx));
+                            self.emit_label(&end_label);
+                            self.emit("call puts");
+                        }
+                        ValType::Void => {}
+                    }
+                    return;
+                }
+
+                // ── Built-in: len ───────────────────────────────
+                if name == "len" {
+                    // len(s) → strlen(s), returns i64
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx"); // string ptr → first arg
+                    self.emit("call strlen");
+                    // result (length) is in RAX
                     return;
                 }
 
