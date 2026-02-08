@@ -1,0 +1,49 @@
+// Enums Demo — enum definitions, variant values, match on enums
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+
+fn describe_color(c: Color) {
+    match c {
+        Color::Red => { print("red"); }
+        Color::Green => { print("green"); }
+        Color::Blue => { print("blue"); }
+    }
+}
+
+fn is_vertical(d: Direction) -> bool {
+    match d {
+        Direction::North => { true }
+        Direction::South => { true }
+        _ => { false }
+    }
+}
+
+fn main() {
+    let c: Color = Color::Green;
+    describe_color(c);
+
+    describe_color(Color::Red);
+    describe_color(Color::Blue);
+
+    let d: Direction = Direction::North;
+    print(is_vertical(d));
+    print(is_vertical(Direction::East));
+
+    // Match with wildcard
+    let x: Color = Color::Blue;
+    match x {
+        Color::Red => { print(0); }
+        _ => { print(1); }
+    }
+}

@@ -28,11 +28,18 @@ struct FuncInfo {
     return_type: Type,
 }
 
+/// Information about a declared enum.
+#[derive(Debug, Clone)]
+struct EnumInfo {
+    variants: Vec<String>,
+}
+
 /// A scope is a mapping from names to variable info.
 /// We use a stack of scopes to handle nested blocks.
 pub struct Checker {
     scopes: Vec<HashMap<String, VarInfo>>,
     functions: HashMap<String, FuncInfo>,
+    enums: HashMap<String, EnumInfo>,
     current_return_type: Type,
     loop_depth: usize,
 }
@@ -42,6 +49,7 @@ impl Checker {
         Self {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
+            enums: HashMap::new(),
             current_return_type: Type::Void,
             loop_depth: 0,
         }
@@ -92,23 +100,47 @@ impl Checker {
             return Ok(Type::Array(Box::new(elem_type), size));
         }
         Type::from_name(name).ok_or_else(|| {
+            // Check if it's an enum type name
+            if self.enums.contains_key(name) {
+                return CompileError::new("internal: should not reach here", span);
+            }
             CompileError::new(format!("unknown type '{}'", name), span)
         })
+    }
+
+    fn resolve_type_or_enum(&self, name: &str, span: Span) -> Result<Type, CompileError> {
+        // Handle array types
+        if name.starts_with('[') && name.ends_with(']') {
+            return self.resolve_type(name, span);
+        }
+        // Check enum types first
+        if self.enums.contains_key(name) {
+            return Ok(Type::Enum(name.to_string()));
+        }
+        self.resolve_type(name, span)
     }
 
     // ── Program-level checking ──────────────────────────
 
     /// Check an entire program.
     pub fn check_program(&mut self, program: &Program) -> Result<(), CompileError> {
-        // First pass: register all function signatures (so functions can call each other)
-        for func in &program.items {
+        // Register enum definitions
+        for enum_def in &program.enums {
+            self.enums.insert(
+                enum_def.name.clone(),
+                EnumInfo { variants: enum_def.variants.clone() },
+            );
+        }
+
+        // First pass: register all function signatures
+        for func in &program.functions {
             let mut param_types = Vec::new();
             for param in &func.params {
-                let ty = self.resolve_type(&param.type_name, param.span)?;
+                let ty = self.resolve_type_or_enum(&param.type_name, param.span)?;
                 param_types.push(ty);
             }
             let return_type = match &func.return_type {
-                Some(name) => self.resolve_type(name, func.span)?,
+                Some(name) => self.resolve_type_or_enum(name, func.span)?,
                 None => Type::Void,
             };
             self.functions.insert(
@@ -137,7 +169,7 @@ impl Checker {
         );
 
         // Second pass: check each function body
-        for func in &program.items {
+        for func in &program.functions {
             self.check_function(func)?;
         }
 
@@ -145,17 +177,15 @@ impl Checker {
     }
 
     fn check_function(&mut self, func: &Function) -> Result<(), CompileError> {
-        // Set the expected return type for this function
         self.current_return_type = match &func.return_type {
-            Some(name) => self.resolve_type(name, func.span)?,
+            Some(name) => self.resolve_type_or_enum(name, func.span)?,
             None => Type::Void,
         };
 
         self.push_scope();
 
-        // Add parameters to scope
         for param in &func.params {
-            let ty = self.resolve_type(&param.type_name, param.span)?;
+            let ty = self.resolve_type_or_enum(&param.type_name, param.span)?;
             self.define_var(&param.name, ty, false);
         }
 
@@ -181,7 +211,7 @@ impl Checker {
                 let value_ty = self.check_expr(value)?;
 
                 if let Some(type_str) = type_name {
-                    let declared_ty = self.resolve_type(type_str, *span)?;
+                    let declared_ty = self.resolve_type_or_enum(type_str, *span)?;
                     if declared_ty != value_ty {
                         return Err(CompileError::new(
                             format!(
@@ -402,6 +432,35 @@ impl Checker {
                             }
                         }
                         Pattern::Wildcard(_) => {} // matches anything
+                        Pattern::EnumVariant(enum_name, variant, span) => {
+                            // Check enum exists
+                            let info = match self.enums.get(enum_name) {
+                                Some(info) => info.clone(),
+                                None => {
+                                    return Err(CompileError::new(
+                                        format!("unknown enum '{}'", enum_name),
+                                        *span,
+                                    ));
+                                }
+                            };
+                            // Check variant exists
+                            if !info.variants.contains(variant) {
+                                return Err(CompileError::new(
+                                    format!("unknown variant '{}::{}' ", enum_name, variant),
+                                    *span,
+                                ));
+                            }
+                            // Check subject is this enum type
+                            if subject_ty != Type::Enum(enum_name.clone()) {
+                                return Err(CompileError::new(
+                                    format!(
+                                        "enum pattern '{}::{}' in match on '{}'",
+                                        enum_name, variant, subject_ty
+                                    ),
+                                    *span,
+                                ));
+                            }
+                        }
                     }
                     self.check_block(&arm.body)?;
                 }
@@ -627,6 +686,25 @@ impl Checker {
                     ));
                 }
                 Ok(elem_ty)
+            }
+
+            Expr::EnumVariant { enum_name, variant, span } => {
+                let info = match self.enums.get(enum_name) {
+                    Some(info) => info.clone(),
+                    None => {
+                        return Err(CompileError::new(
+                            format!("unknown enum '{}'", enum_name),
+                            *span,
+                        ));
+                    }
+                };
+                if !info.variants.contains(variant) {
+                    return Err(CompileError::new(
+                        format!("unknown variant '{}::{}'", enum_name, variant),
+                        *span,
+                    ));
+                }
+                Ok(Type::Enum(enum_name.clone()))
             }
         }
     }

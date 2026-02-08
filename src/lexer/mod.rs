@@ -246,7 +246,14 @@ impl Lexer {
             '[' => TokenKind::LBracket,
             ']' => TokenKind::RBracket,
             ';' => TokenKind::Semicolon,
-            ':' => TokenKind::Colon,
+            ':' => {
+                if self.peek() == Some(':') {
+                    self.advance();
+                    TokenKind::ColonColon // ::
+                } else {
+                    TokenKind::Colon
+                }
+            }
             ',' => TokenKind::Comma,
 
             '.' => {

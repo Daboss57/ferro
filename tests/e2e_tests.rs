@@ -799,3 +799,141 @@ fn test_e2e_match_in_loop() {
         "10\n20\n99\n99"
     );
 }
+
+// ── Enums (Phase 11) ──────────────────────────────────
+
+#[test]
+fn test_e2e_enum_basic() {
+    assert_eq!(
+        compile_and_run(
+            "enum Color { Red, Green, Blue }
+            fn main() {
+                let c: Color = Color::Green;
+                match c {
+                    Color::Red => { print(0); }
+                    Color::Green => { print(1); }
+                    Color::Blue => { print(2); }
+                }
+            }"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn test_e2e_enum_function_param() {
+    assert_eq!(
+        compile_and_run(
+            "enum Dir { Up, Down }
+            fn describe(d: Dir) {
+                match d {
+                    Dir::Up => { print(10); }
+                    Dir::Down => { print(20); }
+                }
+            }
+            fn main() {
+                describe(Dir::Up);
+                describe(Dir::Down);
+            }"
+        ),
+        "10\n20"
+    );
+}
+
+#[test]
+fn test_e2e_enum_return_value() {
+    assert_eq!(
+        compile_and_run(
+            "enum Answer { Yes, No }
+            fn get_answer() -> Answer { Answer::Yes }
+            fn main() {
+                let a: Answer = get_answer();
+                match a {
+                    Answer::Yes => { print(1); }
+                    Answer::No => { print(0); }
+                }
+            }"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn test_e2e_enum_wildcard() {
+    assert_eq!(
+        compile_and_run(
+            "enum Color { Red, Green, Blue }
+            fn main() {
+                let c: Color = Color::Blue;
+                match c {
+                    Color::Red => { print(0); }
+                    _ => { print(99); }
+                }
+            }"
+        ),
+        "99"
+    );
+}
+
+#[test]
+fn test_e2e_enum_comparison() {
+    assert_eq!(
+        compile_and_run(
+            "enum Fruit { Apple, Banana, Cherry }
+            fn main() {
+                let f: Fruit = Fruit::Banana;
+                if f == Fruit::Banana {
+                    print(1);
+                } else {
+                    print(0);
+                }
+            }"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn test_e2e_enum_in_loop() {
+    assert_eq!(
+        compile_and_run(
+            "enum Light { Red, Yellow, Green }
+            fn label(l: Light) {
+                match l {
+                    Light::Red => { print(1); }
+                    Light::Yellow => { print(2); }
+                    Light::Green => { print(3); }
+                }
+            }
+            fn main() {
+                label(Light::Red);
+                label(Light::Yellow);
+                label(Light::Green);
+            }"
+        ),
+        "1\n2\n3"
+    );
+}
+
+#[test]
+fn test_e2e_enum_multiple_enums() {
+    assert_eq!(
+        compile_and_run(
+            "enum Color { Red, Blue }
+            enum Size { Small, Large }
+            fn main() {
+                let c: Color = Color::Blue;
+                let s: Size = Size::Small;
+                match c {
+                    Color::Red => { print(10); }
+                    Color::Blue => { print(20); }
+                }
+                match s {
+                    Size::Small => { print(100); }
+                    Size::Large => { print(200); }
+                }
+            }"
+        ),
+        "20\n100"
+    );
+}

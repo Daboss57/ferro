@@ -527,3 +527,86 @@ fn test_modulo_type_error() {
         "cannot apply",
     );
 }
+
+// ── Enums (Phase 11) ──────────────────────────────────
+
+#[test]
+fn test_enum_valid() {
+    check_ok(
+        "enum Color { Red, Green, Blue }
+        fn main() { let c: Color = Color::Red; }",
+    );
+}
+
+#[test]
+fn test_enum_match_valid() {
+    check_ok(
+        "enum Color { Red, Green }
+        fn main() {
+            let c: Color = Color::Red;
+            match c {
+                Color::Red => { print(0); }
+                Color::Green => { print(1); }
+            }
+        }",
+    );
+}
+
+#[test]
+fn test_enum_unknown_variant() {
+    check_err(
+        "enum Color { Red, Green }
+        fn main() { let c: Color = Color::Blue; }",
+        "unknown variant",
+    );
+}
+
+#[test]
+fn test_enum_unknown_enum() {
+    check_err(
+        "fn main() { let c: Foo = Foo::Bar; }",
+        "unknown",
+    );
+}
+
+#[test]
+fn test_enum_type_mismatch_assign() {
+    check_err(
+        "enum Color { Red }
+        fn main() { let c: Color = 42; }",
+        "type mismatch",
+    );
+}
+
+#[test]
+fn test_enum_pattern_wrong_enum() {
+    check_err(
+        "enum Color { Red }
+        enum Size { Small }
+        fn main() {
+            let c: Color = Color::Red;
+            match c {
+                Size::Small => { print(0); }
+            }
+        }",
+        "enum pattern",
+    );
+}
+
+#[test]
+fn test_enum_function_param() {
+    check_ok(
+        "enum Dir { Up, Down }
+        fn go(d: Dir) { print(0); }
+        fn main() { go(Dir::Up); }",
+    );
+}
+
+#[test]
+fn test_enum_return_type() {
+    check_ok(
+        "enum Answer { Yes, No }
+        fn ask() -> Answer { Answer::Yes }
+        fn main() { let a: Answer = ask(); }",
+    );
+}

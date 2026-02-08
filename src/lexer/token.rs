@@ -22,6 +22,7 @@ pub enum TokenKind {
     Break,    // break
     Continue, // continue
     Match,    // match
+    Enum,     // enum
     Return,   // return
     True,     // true
     False,    // false
@@ -46,6 +47,7 @@ pub enum TokenKind {
     FatArrow,     // =>
     PipeArrow,    // |>
     DotDot,       // ..
+    ColonColon,   // ::
 
     // Punctuation
     LParen,    // (
@@ -83,6 +85,7 @@ pub fn lookup_keyword(word: &str) -> Option<TokenKind> {
         "break"    => Some(TokenKind::Break),
         "continue" => Some(TokenKind::Continue),
         "match"    => Some(TokenKind::Match),
+        "enum"     => Some(TokenKind::Enum),
         "return"   => Some(TokenKind::Return),
         "true"     => Some(TokenKind::True),
         "false"    => Some(TokenKind::False),

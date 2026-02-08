@@ -5,7 +5,10 @@ use std::fmt::Write;
 
 pub fn pretty_print(program: &Program) -> String {
     let mut out = String::new();
-    for func in &program.items {
+    for enum_def in &program.enums {
+        print_enum_def(&mut out, enum_def, 0);
+    }
+    for func in &program.functions {
         print_function(&mut out, func, 0);
     }
     out
@@ -15,6 +18,18 @@ fn indent(out: &mut String, level: usize) {
     for _ in 0..level {
         out.push_str("  ");
     }
+}
+
+fn print_enum_def(out: &mut String, enum_def: &EnumDef, level: usize) {
+    indent(out, level);
+    write!(out, "enum {} {{ ", enum_def.name).unwrap();
+    for (i, variant) in enum_def.variants.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(variant);
+    }
+    out.push_str(" }\n");
 }
 
 fn print_function(out: &mut String, func: &Function, level: usize) {
@@ -137,6 +152,9 @@ fn print_stmt(out: &mut String, stmt: &Stmt, level: usize) {
                     Pattern::IntLit(v, _) => write!(out, "{}", v).unwrap(),
                     Pattern::BoolLit(v, _) => write!(out, "{}", v).unwrap(),
                     Pattern::Wildcard(_) => out.push('_'),
+                    Pattern::EnumVariant(enum_name, variant, _) => {
+                        write!(out, "{}::{}", enum_name, variant).unwrap()
+                    }
                 }
                 out.push_str(" => {\n");
                 print_block(out, &arm.body, level + 2);
@@ -211,6 +229,9 @@ fn print_expr(out: &mut String, expr: &Expr) {
             out.push('[');
             print_expr(out, index);
             out.push(']');
+        }
+        Expr::EnumVariant { enum_name, variant, .. } => {
+            write!(out, "{}::{}", enum_name, variant).unwrap();
         }
     }
 }

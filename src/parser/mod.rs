@@ -96,13 +96,18 @@ impl Parser {
 
     // ── Program ─────────────────────────────────────────────
 
-    /// Parse a full program: a list of function definitions.
+    /// Parse a full program: a list of top-level items (functions and enums).
     pub fn parse_program(&mut self) -> Result<Program, CompileError> {
-        let mut items = Vec::new();
+        let mut functions = Vec::new();
+        let mut enums = Vec::new();
         while *self.peek() != TokenKind::Eof {
-            items.push(self.parse_function()?);
+            if *self.peek() == TokenKind::Enum {
+                enums.push(self.parse_enum_def()?);
+            } else {
+                functions.push(self.parse_function()?);
+            }
         }
-        Ok(Program { items })
+        Ok(Program { functions, enums })
     }
 
     // ── Functions ───────────────────────────────────────────
@@ -150,6 +155,35 @@ impl Parser {
             params,
             return_type,
             body,
+            span: Span::new(start.start, end.start),
+        })
+    }
+
+    /// Parse: `enum Name { Variant1, Variant2, ... }`
+    fn parse_enum_def(&mut self) -> Result<EnumDef, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::Enum)?;
+        let (name, _) = self.expect_ident()?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut variants = Vec::new();
+        while *self.peek() != TokenKind::RBrace {
+            if !variants.is_empty() {
+                self.expect(&TokenKind::Comma)?;
+                // Allow trailing comma
+                if *self.peek() == TokenKind::RBrace {
+                    break;
+                }
+            }
+            let (variant_name, _) = self.expect_ident()?;
+            variants.push(variant_name);
+        }
+        let end = self.span();
+        self.expect(&TokenKind::RBrace)?;
+
+        Ok(EnumDef {
+            name,
+            variants,
             span: Span::new(start.start, end.start),
         })
     }
@@ -353,7 +387,7 @@ impl Parser {
         })
     }
 
-    /// Parse a match pattern: integer, boolean, or `_` wildcard.
+    /// Parse a match pattern: integer, boolean, `_` wildcard, or `Enum::Variant`.
     fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
         match self.peek().clone() {
             TokenKind::Int(v) => {
@@ -376,8 +410,23 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Wildcard(span))
             }
+            TokenKind::Ident(name) => {
+                let start = self.span();
+                self.advance();
+                // Check for `::` — enum variant pattern
+                if *self.peek() == TokenKind::ColonColon {
+                    self.advance(); // consume ::
+                    let (variant, end_span) = self.expect_ident()?;
+                    Ok(Pattern::EnumVariant(name, variant, Span::new(start.start, end_span.end)))
+                } else {
+                    Err(CompileError::new(
+                        format!("expected pattern (integer, bool, _, or Enum::Variant), found identifier '{}'", name),
+                        start,
+                    ))
+                }
+            }
             _ => Err(CompileError::new(
-                format!("expected pattern (integer, bool, or _), found {:?}", self.peek()),
+                format!("expected pattern (integer, bool, _, or Enum::Variant), found {:?}", self.peek()),
                 self.span(),
             )),
         }
@@ -586,6 +635,17 @@ impl Parser {
                 let span = self.span();
                 self.advance();
 
+                // Check for enum variant: `Name::Variant`
+                if *self.peek() == TokenKind::ColonColon {
+                    self.advance(); // consume ::
+                    let (variant, end_span) = self.expect_ident()?;
+                    return Ok(Expr::EnumVariant {
+                        enum_name: name,
+                        variant,
+                        span: Span::new(span.start, end_span.end),
+                    });
+                }
+
                 // Check if it's a function call: `name(`
                 if *self.peek() == TokenKind::LParen {
                     self.advance(); // consume '('
@@ -676,7 +736,8 @@ impl Expr {
             | Expr::UnaryOp { span, .. }
             | Expr::Call { span, .. }
             | Expr::ArrayLit { span, .. }
-            | Expr::Index { span, .. } => *span,
+            | Expr::Index { span, .. }
+            | Expr::EnumVariant { span, .. } => *span,
         }
     }
 }

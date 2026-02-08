@@ -4,10 +4,19 @@ pub mod pretty;
 
 use crate::error::Span;
 
-/// A complete Ferro program: a list of top-level items (functions).
+/// A complete Ferro program: a list of top-level items.
 #[derive(Debug)]
 pub struct Program {
-    pub items: Vec<Function>,
+    pub functions: Vec<Function>,
+    pub enums: Vec<EnumDef>,
+}
+
+/// An enum definition: `enum Color { Red, Green, Blue }`
+#[derive(Debug)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<String>,
+    pub span: Span,
 }
 
 /// A function definition: `fn name(params) -> return_type { body }`
@@ -129,6 +138,8 @@ pub enum Pattern {
     BoolLit(bool, Span),
     /// Wildcard: `_`
     Wildcard(Span),
+    /// Enum variant: `Color::Red`
+    EnumVariant(String, String, Span),
 }
 
 /// An expression — things that PRODUCE a value.
@@ -182,6 +193,12 @@ pub enum Expr {
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
+        span: Span,
+    },
+    /// Enum variant expression: `Color::Red`
+    EnumVariant {
+        enum_name: String,
+        variant: String,
         span: Span,
     },
 }

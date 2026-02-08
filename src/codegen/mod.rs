@@ -50,6 +50,8 @@ pub struct Codegen {
     func_return_types: HashMap<String, ValType>,
     /// Stack of (continue_label, break_label) for nested loops.
     loop_labels: Vec<(String, String)>,
+    /// Maps "EnumName::Variant" → integer discriminant value.
+    enum_values: HashMap<String, i64>,
 }
 
 impl Codegen {
@@ -62,6 +64,7 @@ impl Codegen {
             stack_offset: 0,
             func_return_types: HashMap::new(),
             loop_labels: Vec::new(),
+            enum_values: HashMap::new(),
         }
     }
 
@@ -128,6 +131,7 @@ impl Codegen {
                     ValType::Int
                 }
             }
+            Expr::EnumVariant { .. } => ValType::Int, // enums stored as i64
         }
     }
 
@@ -145,8 +149,16 @@ impl Codegen {
 
     /// Generate assembly for an entire program.
     pub fn generate(mut self, program: &Program) -> String {
+        // Register enum variant → discriminant mappings
+        for enum_def in &program.enums {
+            for (i, variant) in enum_def.variants.iter().enumerate() {
+                let key = format!("{}::{}", enum_def.name, variant);
+                self.enum_values.insert(key, i as i64);
+            }
+        }
+
         // Collect function return types so infer_type can resolve Call exprs.
-        for func in &program.items {
+        for func in &program.functions {
             let rt = match &func.return_type {
                 Some(n) => Self::valtype_from_name(n),
                 None => ValType::Void,
@@ -156,7 +168,7 @@ impl Codegen {
         // Emit text section
         writeln!(self.output, "    .section .text").unwrap();
 
-        for func in &program.items {
+        for func in &program.functions {
             self.gen_function(func);
         }
 
@@ -433,6 +445,17 @@ impl Codegen {
                             self.gen_block(&arm.body);
                             self.emit(&format!("jmp {}", end_label));
                         }
+                        Pattern::EnumVariant(enum_name, variant, _) => {
+                            let skip = self.new_label("skip");
+                            let key = format!("{}::{}", enum_name, variant);
+                            let val = self.enum_values[&key];
+                            self.emit(&format!("cmpq ${}, (%rsp)", val));
+                            self.emit(&format!("jne {}", skip));
+                            self.emit("addq $8, %rsp");
+                            self.gen_block(&arm.body);
+                            self.emit(&format!("jmp {}", end_label));
+                            self.emit_label(&skip);
+                        }
                     }
                 }
 
@@ -651,13 +674,17 @@ impl Codegen {
             }
 
             Expr::Index { object, index, .. } => {
-                // Evaluate index → RAX
                 self.gen_expr(index);
-                // Load from base + index*8
                 if let Expr::Ident { name, .. } = object.as_ref() {
                     let base = self.locals[name].offset;
                     self.emit(&format!("movq {}(%rbp,%rax,8), %rax", base));
                 }
+            }
+
+            Expr::EnumVariant { enum_name, variant, .. } => {
+                let key = format!("{}::{}", enum_name, variant);
+                let val = self.enum_values[&key];
+                self.emit(&format!("movq ${}, %rax", val));
             }
         }
     }

@@ -22,7 +22,7 @@ fn parse_and_print(source: &str) -> String {
 #[test]
 fn test_integer_literal() {
     let prog = parse("fn main() { 42; }");
-    if let Stmt::Expr { expr: Expr::IntLit { value, .. }, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Expr { expr: Expr::IntLit { value, .. }, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(*value, 42);
     } else {
         panic!("expected int literal");
@@ -32,12 +32,12 @@ fn test_integer_literal() {
 #[test]
 fn test_boolean_literals() {
     let prog = parse("fn main() { true; false; }");
-    if let Stmt::Expr { expr: Expr::BoolLit { value, .. }, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Expr { expr: Expr::BoolLit { value, .. }, .. } = &prog.functions[0].body.stmts[0] {
         assert!(*value);
     } else {
         panic!("expected true");
     }
-    if let Stmt::Expr { expr: Expr::BoolLit { value, .. }, .. } = &prog.items[0].body.stmts[1] {
+    if let Stmt::Expr { expr: Expr::BoolLit { value, .. }, .. } = &prog.functions[0].body.stmts[1] {
         assert!(!*value);
     } else {
         panic!("expected false");
@@ -47,7 +47,7 @@ fn test_boolean_literals() {
 #[test]
 fn test_string_literal() {
     let prog = parse(r#"fn main() { "hello"; }"#);
-    if let Stmt::Expr { expr: Expr::StringLit { value, .. }, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Expr { expr: Expr::StringLit { value, .. }, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(value, "hello");
     } else {
         panic!("expected string literal");
@@ -99,7 +99,7 @@ fn test_parenthesized_expr() {
 #[test]
 fn test_function_call_no_args() {
     let prog = parse("fn main() { foo(); }");
-    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(name, "foo");
         assert!(args.is_empty());
     } else {
@@ -110,7 +110,7 @@ fn test_function_call_no_args() {
 #[test]
 fn test_function_call_with_args() {
     let prog = parse("fn main() { add(1, 2); }");
-    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(name, "add");
         assert_eq!(args.len(), 2);
     } else {
@@ -123,7 +123,7 @@ fn test_function_call_with_args() {
 #[test]
 fn test_let_with_type() {
     let prog = parse("fn main() { let x: i64 = 42; }");
-    if let Stmt::Let { name, mutable, type_name, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Let { name, mutable, type_name, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(name, "x");
         assert!(!mutable);
         assert_eq!(type_name.as_deref(), Some("i64"));
@@ -135,7 +135,7 @@ fn test_let_with_type() {
 #[test]
 fn test_let_mut() {
     let prog = parse("fn main() { let mut y: i64 = 0; }");
-    if let Stmt::Let { name, mutable, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Let { name, mutable, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(name, "y");
         assert!(mutable);
     } else {
@@ -146,7 +146,7 @@ fn test_let_mut() {
 #[test]
 fn test_let_without_type() {
     let prog = parse("fn main() { let z = 10; }");
-    if let Stmt::Let { name, type_name, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Let { name, type_name, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(name, "z");
         assert!(type_name.is_none());
     } else {
@@ -159,7 +159,7 @@ fn test_let_without_type() {
 #[test]
 fn test_assignment() {
     let prog = parse("fn main() { x = 99; }");
-    if let Stmt::Assign { name, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Assign { name, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(name, "x");
     } else {
         panic!("expected assignment");
@@ -171,7 +171,7 @@ fn test_assignment() {
 #[test]
 fn test_return_with_value() {
     let prog = parse("fn main() { return 42; }");
-    if let Stmt::Return { value: Some(Expr::IntLit { value, .. }), .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Return { value: Some(Expr::IntLit { value, .. }), .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(*value, 42);
     } else {
         panic!("expected return with value");
@@ -181,7 +181,7 @@ fn test_return_with_value() {
 #[test]
 fn test_return_void() {
     let prog = parse("fn main() { return; }");
-    if let Stmt::Return { value: None, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Return { value: None, .. } = &prog.functions[0].body.stmts[0] {
         // good
     } else {
         panic!("expected void return");
@@ -193,7 +193,7 @@ fn test_return_void() {
 #[test]
 fn test_if_without_else() {
     let prog = parse("fn main() { if x { 1; } }");
-    if let Stmt::If { else_block: None, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::If { else_block: None, .. } = &prog.functions[0].body.stmts[0] {
         // good
     } else {
         panic!("expected if without else");
@@ -203,7 +203,7 @@ fn test_if_without_else() {
 #[test]
 fn test_if_with_else() {
     let prog = parse("fn main() { if x { 1; } else { 2; } }");
-    if let Stmt::If { else_block: Some(_), .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::If { else_block: Some(_), .. } = &prog.functions[0].body.stmts[0] {
         // good
     } else {
         panic!("expected if with else");
@@ -215,7 +215,7 @@ fn test_if_with_else() {
 #[test]
 fn test_while_loop() {
     let prog = parse("fn main() { while x { 1; } }");
-    if let Stmt::While { .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::While { .. } = &prog.functions[0].body.stmts[0] {
         // good
     } else {
         panic!("expected while loop");
@@ -227,28 +227,28 @@ fn test_while_loop() {
 #[test]
 fn test_function_with_return_type() {
     let prog = parse("fn add(a: i64, b: i64) -> i64 { return a; }");
-    assert_eq!(prog.items[0].name, "add");
-    assert_eq!(prog.items[0].params.len(), 2);
-    assert_eq!(prog.items[0].params[0].name, "a");
-    assert_eq!(prog.items[0].params[0].type_name, "i64");
-    assert_eq!(prog.items[0].params[1].name, "b");
-    assert_eq!(prog.items[0].return_type.as_deref(), Some("i64"));
+    assert_eq!(prog.functions[0].name, "add");
+    assert_eq!(prog.functions[0].params.len(), 2);
+    assert_eq!(prog.functions[0].params[0].name, "a");
+    assert_eq!(prog.functions[0].params[0].type_name, "i64");
+    assert_eq!(prog.functions[0].params[1].name, "b");
+    assert_eq!(prog.functions[0].return_type.as_deref(), Some("i64"));
 }
 
 #[test]
 fn test_function_no_params_no_return() {
     let prog = parse("fn main() { 1; }");
-    assert_eq!(prog.items[0].name, "main");
-    assert!(prog.items[0].params.is_empty());
-    assert!(prog.items[0].return_type.is_none());
+    assert_eq!(prog.functions[0].name, "main");
+    assert!(prog.functions[0].params.is_empty());
+    assert!(prog.functions[0].return_type.is_none());
 }
 
 #[test]
 fn test_multiple_functions() {
     let prog = parse("fn foo() { 1; } fn bar() { 2; }");
-    assert_eq!(prog.items.len(), 2);
-    assert_eq!(prog.items[0].name, "foo");
-    assert_eq!(prog.items[1].name, "bar");
+    assert_eq!(prog.functions.len(), 2);
+    assert_eq!(prog.functions[0].name, "foo");
+    assert_eq!(prog.functions[1].name, "bar");
 }
 
 // ── Full programs ───────────────────────────────────────
@@ -293,10 +293,10 @@ fn main() {
 fn test_implicit_return_parsed_as_tail_expr() {
     let prog = parse("fn add(a: i64, b: i64) -> i64 { a + b }");
     // The last expression without `;` should be a TailExpr
-    if let Stmt::TailExpr { .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::TailExpr { .. } = &prog.functions[0].body.stmts[0] {
         // good
     } else {
-        panic!("expected TailExpr, got {:?}", prog.items[0].body.stmts[0]);
+        panic!("expected TailExpr, got {:?}", prog.functions[0].body.stmts[0]);
     }
 }
 
@@ -314,7 +314,7 @@ fn test_implicit_return_pretty_print() {
 fn test_pipe_desugars_to_call() {
     // `x |> f` should desugar to `f(x)`
     let prog = parse("fn main() { x |> f; }");
-    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(name, "f");
         assert_eq!(args.len(), 1);
     } else {
@@ -326,7 +326,7 @@ fn test_pipe_desugars_to_call() {
 fn test_pipe_with_args_desugars() {
     // `x |> f(y)` should desugar to `f(x, y)`
     let prog = parse("fn main() { x |> f(y); }");
-    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.items[0].body.stmts[0] {
+    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.functions[0].body.stmts[0] {
         assert_eq!(name, "f");
         assert_eq!(args.len(), 2); // x and y
     } else {
