@@ -286,3 +286,20 @@ fn test_unterminated_string_error() {
     let err = lexer.tokenize().unwrap_err();
     assert!(err.message.contains("unterminated string"));
 }
+
+
+// ── Import & Priv keyword tests ────────────────────────
+
+#[test]
+fn test_import_keyword() {
+    let mut lexer = Lexer::new("import");
+    let tokens = lexer.tokenize().unwrap();
+    assert_eq!(tokens[0].kind, TokenKind::Import);
+}
+
+#[test]
+fn test_priv_keyword() {
+    let mut lexer = Lexer::new("priv");
+    let tokens = lexer.tokenize().unwrap();
+    assert_eq!(tokens[0].kind, TokenKind::Priv);
+}

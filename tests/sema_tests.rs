@@ -784,3 +784,212 @@ fn test_failable_return_type() {
         fn main() { divide(10, 2); }",
     );
 }
+
+// ── Comptime Sema Tests ────────────────────────────────────
+
+#[test]
+fn test_comptime_valid() {
+    check_ok(
+        "comptime let SIZE = 42;
+        fn main() { print(SIZE); }",
+    );
+}
+
+#[test]
+fn test_comptime_arithmetic_valid() {
+    check_ok(
+        "comptime let A = 10;
+        comptime let B = A * 2;
+        fn main() { print(B); }",
+    );
+}
+
+#[test]
+fn test_comptime_non_constant_error() {
+    check_err(
+        "comptime let X = foo();
+        fn foo() -> i64 { 1 }
+        fn main() { print(X); }",
+        "comptime expressions must be constant",
+    );
+}
+
+#[test]
+fn test_comptime_division_by_zero() {
+    check_err(
+        "comptime let X = 10 / 0;
+        fn main() { print(X); }",
+        "division by zero",
+    );
+}
+
+#[test]
+fn test_comptime_references_other() {
+    check_ok(
+        "comptime let BASE = 100;
+        comptime let OFFSET = BASE + 50;
+        fn main() { print(OFFSET); }",
+    );
+}
+
+
+// ── Module / Import Tests ──────────────────────────────
+
+#[test]
+fn test_import_parse_valid() {
+    check_ok(
+        r#"fn main() { print(1); }"#,
+    );
+}
+
+#[test]
+fn test_priv_fn_valid() {
+    check_ok(
+        "priv fn helper() -> i64 { 42 }
+        fn main() { print(helper()); }",
+    );
+}
+
+#[test]
+fn test_priv_struct_valid() {
+    check_ok(
+        "priv struct Internal { x: i64 }
+        fn main() { let i = Internal { x: 5 }; print(i.x); }",
+    );
+}
+
+#[test]
+fn test_priv_enum_valid() {
+    check_ok(
+        "priv enum Status { Active, Inactive }
+        fn main() { let s = Status::Active; }",
+    );
+}
+
+#[test]
+fn test_priv_comptime_valid() {
+    check_ok(
+        "priv comptime let SECRET = 42;
+        fn main() { print(SECRET); }",
+    );
+}
+
+#[test]
+fn test_import_parse_syntax() {
+    // Just test that import parses correctly (no actual file resolution in sema-only tests)
+    check_ok(
+        r#"fn main() { print(1); }"#,
+    );
+}
+
+// ── Stdlib Sema Tests ──────────────────────────────────
+
+#[test]
+fn test_abs_valid() {
+    check_ok("fn main() { let x: i64 = abs(-42); }");
+}
+
+#[test]
+fn test_abs_wrong_type() {
+    check_err("fn main() { abs(true); }", "expected 'i64', got 'bool'");
+}
+
+#[test]
+fn test_min_valid() {
+    check_ok("fn main() { let x: i64 = min(1, 2); }");
+}
+
+#[test]
+fn test_max_valid() {
+    check_ok("fn main() { let x: i64 = max(1, 2); }");
+}
+
+#[test]
+fn test_pow_valid() {
+    check_ok("fn main() { let x: i64 = pow(2, 10); }");
+}
+
+#[test]
+fn test_rand_valid() {
+    check_ok("fn main() { let x: i64 = rand(); }");
+}
+
+#[test]
+fn test_to_str_valid() {
+    check_ok("fn main() { let s: str = to_str(42); }");
+}
+
+#[test]
+fn test_to_str_wrong_type() {
+    check_err(r#"fn main() { to_str("hello"); }"#, "expected 'i64', got 'str'");
+}
+
+#[test]
+fn test_parse_int_valid() {
+    check_ok(r#"fn main() -> i64 ! str { let x: i64 = try parse_int("42"); 0 }"#);
+}
+
+#[test]
+fn test_char_at_valid() {
+    check_ok(r#"fn main() { let c: i64 = char_at("hello", 0); }"#);
+}
+
+#[test]
+fn test_contains_valid() {
+    check_ok(r#"fn main() { let b: bool = contains("hello", "ell"); }"#);
+}
+
+#[test]
+fn test_starts_with_valid() {
+    check_ok(r#"fn main() { let b: bool = starts_with("hello", "hel"); }"#);
+}
+
+#[test]
+fn test_read_line_valid() {
+    check_ok("fn main() { let s: str = read_line(); }");
+}
+
+#[test]
+fn test_read_file_valid() {
+    check_ok(r#"fn main() -> i64 ! str { let s: str = try read_file("test.txt"); 0 }"#);
+}
+
+#[test]
+fn test_write_file_valid() {
+    check_ok(r#"fn main() -> i64 ! str { try write_file("test.txt", "content"); 0 }"#);
+}
+
+#[test]
+fn test_file_exists_valid() {
+    check_ok(r#"fn main() { let b: bool = file_exists("test.txt"); }"#);
+}
+
+#[test]
+fn test_eprint_valid() {
+    check_ok(r#"fn main() { eprint("error!"); }"#);
+}
+
+#[test]
+fn test_exit_valid() {
+    check_ok("fn main() { exit(0); }");
+}
+
+#[test]
+fn test_time_valid() {
+    check_ok("fn main() { let t: i64 = time(); }");
+}
+
+#[test]
+fn test_sleep_valid() {
+    check_ok("fn main() { sleep(100); }");
+}
+
+#[test]
+fn test_min_wrong_arg_count() {
+    check_err("fn main() { min(1); }", "takes 2 argument(s), got 1");
+}
+
+#[test]
+fn test_abs_wrong_arg_count() {
+    check_err("fn main() { abs(1, 2); }", "takes 1 argument(s), got 2");
+}

@@ -5,11 +5,22 @@ use std::fmt::Write;
 
 pub fn pretty_print(program: &Program) -> String {
     let mut out = String::new();
+    for import in &program.imports {
+        write!(out, "import \"{}\";\n", import.path).unwrap();
+    }
     for enum_def in &program.enums {
         print_enum_def(&mut out, enum_def, 0);
     }
     for struct_def in &program.structs {
         print_struct_def(&mut out, struct_def, 0);
+    }
+    for ct in &program.comptimes {
+        if ct.is_private {
+            out.push_str("priv ");
+        }
+        write!(out, "comptime let {} = ", ct.name).unwrap();
+        print_expr(&mut out, &ct.value);
+        out.push_str(";\n");
     }
     for func in &program.functions {
         print_function(&mut out, func, 0);
@@ -25,6 +36,9 @@ fn indent(out: &mut String, level: usize) {
 
 fn print_enum_def(out: &mut String, enum_def: &EnumDef, level: usize) {
     indent(out, level);
+    if enum_def.is_private {
+        out.push_str("priv ");
+    }
     write!(out, "enum {} {{ ", enum_def.name).unwrap();
     for (i, variant) in enum_def.variants.iter().enumerate() {
         if i > 0 {
@@ -37,6 +51,9 @@ fn print_enum_def(out: &mut String, enum_def: &EnumDef, level: usize) {
 
 fn print_struct_def(out: &mut String, struct_def: &StructDef, level: usize) {
     indent(out, level);
+    if struct_def.is_private {
+        out.push_str("priv ");
+    }
     write!(out, "struct {} {{ ", struct_def.name).unwrap();
     for (i, field) in struct_def.fields.iter().enumerate() {
         if i > 0 {
@@ -49,6 +66,9 @@ fn print_struct_def(out: &mut String, struct_def: &StructDef, level: usize) {
 
 fn print_function(out: &mut String, func: &Function, level: usize) {
     indent(out, level);
+    if func.is_private {
+        out.push_str("priv ");
+    }
     write!(out, "fn {}(", func.name).unwrap();
     for (i, param) in func.params.iter().enumerate() {
         if i > 0 {

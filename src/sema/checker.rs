@@ -7,7 +7,7 @@
 // 4. Conditions in if/while are booleans
 // 5. Return types match the function signature
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::error::{CompileError, Span};
@@ -48,6 +48,10 @@ pub struct Checker {
     functions: HashMap<String, FuncInfo>,
     enums: HashMap<String, EnumInfo>,
     structs: HashMap<String, StructInfo>,
+    comptimes: HashMap<String, (Type, i64)>, // name → (type, evaluated value)
+    private_items: HashSet<String>,           // names that are priv in imported modules
+    imported_items: HashSet<String>,          // all names from imported modules
+    check_privacy: bool,                     // true when checking main-module code
     current_return_type: Type,
     current_can_fail: bool,
     loop_depth: usize,
@@ -60,6 +64,10 @@ impl Checker {
             functions: HashMap::new(),
             enums: HashMap::new(),
             structs: HashMap::new(),
+            comptimes: HashMap::new(),
+            private_items: HashSet::new(),
+            imported_items: HashSet::new(),
+            check_privacy: false,
             current_return_type: Type::Void,
             current_can_fail: false,
             loop_depth: 0,
@@ -91,6 +99,67 @@ impl Checker {
             }
         }
         None
+    }
+
+    // ── Compile-time evaluation ────────────────────────
+
+    fn eval_comptime(&self, expr: &Expr, span: Span) -> Result<i64, CompileError> {
+        match expr {
+            Expr::IntLit { value, .. } => Ok(*value),
+            Expr::BoolLit { value, .. } => Ok(if *value { 1 } else { 0 }),
+            Expr::Ident { name, .. } => {
+                if let Some((_, val)) = self.comptimes.get(name) {
+                    Ok(*val)
+                } else {
+                    Err(CompileError::new(
+                        format!("'{}' is not a comptime constant", name),
+                        span,
+                    ))
+                }
+            }
+            Expr::UnaryOp { op, operand, .. } => {
+                let v = self.eval_comptime(operand, span)?;
+                match op {
+                    UnaryOp::Neg => Ok(-v),
+                    UnaryOp::Not => Ok(if v == 0 { 1 } else { 0 }),
+                }
+            }
+            Expr::BinaryOp { op, left, right, .. } => {
+                let l = self.eval_comptime(left, span)?;
+                let r = self.eval_comptime(right, span)?;
+                match op {
+                    BinOp::Add => Ok(l + r),
+                    BinOp::Sub => Ok(l - r),
+                    BinOp::Mul => Ok(l * r),
+                    BinOp::Div => {
+                        if r == 0 {
+                            Err(CompileError::new("division by zero in comptime", span))
+                        } else {
+                            Ok(l / r)
+                        }
+                    }
+                    BinOp::Mod => {
+                        if r == 0 {
+                            Err(CompileError::new("modulo by zero in comptime", span))
+                        } else {
+                            Ok(l % r)
+                        }
+                    }
+                    BinOp::Eq  => Ok(if l == r { 1 } else { 0 }),
+                    BinOp::Neq => Ok(if l != r { 1 } else { 0 }),
+                    BinOp::Lt  => Ok(if l < r  { 1 } else { 0 }),
+                    BinOp::Gt  => Ok(if l > r  { 1 } else { 0 }),
+                    BinOp::Lte => Ok(if l <= r { 1 } else { 0 }),
+                    BinOp::Gte => Ok(if l >= r { 1 } else { 0 }),
+                    BinOp::And => Ok(if l != 0 && r != 0 { 1 } else { 0 }),
+                    BinOp::Or  => Ok(if l != 0 || r != 0 { 1 } else { 0 }),
+                }
+            }
+            _ => Err(CompileError::new(
+                "comptime expressions must be constant (literals, arithmetic, other comptime values)",
+                span,
+            )),
+        }
     }
 
     // ── Resolve a type name ─────────────────────────────
@@ -134,6 +203,16 @@ impl Checker {
 
     // ── Program-level checking ──────────────────────────
 
+    /// Mark items as private (from imported modules). Must be called before check_program.
+    pub fn set_imported_privates(&mut self, privates: &[(String, bool)]) {
+        for (name, is_private) in privates {
+            self.imported_items.insert(name.clone());
+            if *is_private {
+                self.private_items.insert(name.clone());
+            }
+        }
+    }
+
     /// Check an entire program.
     pub fn check_program(&mut self, program: &Program) -> Result<(), CompileError> {
         // Register enum definitions
@@ -155,6 +234,18 @@ impl Checker {
                 struct_def.name.clone(),
                 StructInfo { fields },
             );
+        }
+
+        // Evaluate comptime constants
+        for ct in &program.comptimes {
+            let val = self.eval_comptime(&ct.value, ct.span)?;
+            let ty = match &ct.value {
+                Expr::BoolLit { .. } => Type::Bool,
+                _ => Type::I64,
+            };
+            self.comptimes.insert(ct.name.clone(), (ty.clone(), val));
+            // Also make comptime constants available as variables in all scopes
+            self.define_var(&ct.name, ty, false);
         }
 
         // First pass: register all function signatures
@@ -195,10 +286,75 @@ impl Checker {
             },
         );
 
+        // ── Math builtins ────────────────────────────────
+        self.functions.insert("abs".to_string(), FuncInfo {
+            param_types: vec![Type::I64], return_type: Type::I64, can_fail: false,
+        });
+        self.functions.insert("min".to_string(), FuncInfo {
+            param_types: vec![Type::I64, Type::I64], return_type: Type::I64, can_fail: false,
+        });
+        self.functions.insert("max".to_string(), FuncInfo {
+            param_types: vec![Type::I64, Type::I64], return_type: Type::I64, can_fail: false,
+        });
+        self.functions.insert("pow".to_string(), FuncInfo {
+            param_types: vec![Type::I64, Type::I64], return_type: Type::I64, can_fail: false,
+        });
+        self.functions.insert("rand".to_string(), FuncInfo {
+            param_types: vec![], return_type: Type::I64, can_fail: false,
+        });
+
+        // ── String builtins ──────────────────────────────
+        self.functions.insert("to_str".to_string(), FuncInfo {
+            param_types: vec![Type::I64], return_type: Type::Str, can_fail: false,
+        });
+        self.functions.insert("parse_int".to_string(), FuncInfo {
+            param_types: vec![Type::Str], return_type: Type::I64, can_fail: true,
+        });
+        self.functions.insert("char_at".to_string(), FuncInfo {
+            param_types: vec![Type::Str, Type::I64], return_type: Type::I64, can_fail: false,
+        });
+        self.functions.insert("contains".to_string(), FuncInfo {
+            param_types: vec![Type::Str, Type::Str], return_type: Type::Bool, can_fail: false,
+        });
+        self.functions.insert("starts_with".to_string(), FuncInfo {
+            param_types: vec![Type::Str, Type::Str], return_type: Type::Bool, can_fail: false,
+        });
+
+        // ── I/O builtins ─────────────────────────────────
+        self.functions.insert("read_line".to_string(), FuncInfo {
+            param_types: vec![], return_type: Type::Str, can_fail: false,
+        });
+        self.functions.insert("read_file".to_string(), FuncInfo {
+            param_types: vec![Type::Str], return_type: Type::Str, can_fail: true,
+        });
+        self.functions.insert("write_file".to_string(), FuncInfo {
+            param_types: vec![Type::Str, Type::Str], return_type: Type::Void, can_fail: true,
+        });
+        self.functions.insert("file_exists".to_string(), FuncInfo {
+            param_types: vec![Type::Str], return_type: Type::Bool, can_fail: false,
+        });
+        self.functions.insert("eprint".to_string(), FuncInfo {
+            param_types: vec![Type::Str], return_type: Type::Void, can_fail: false,
+        });
+
+        // ── System builtins ──────────────────────────────
+        self.functions.insert("exit".to_string(), FuncInfo {
+            param_types: vec![Type::I64], return_type: Type::Void, can_fail: false,
+        });
+        self.functions.insert("time".to_string(), FuncInfo {
+            param_types: vec![], return_type: Type::I64, can_fail: false,
+        });
+        self.functions.insert("sleep".to_string(), FuncInfo {
+            param_types: vec![Type::I64], return_type: Type::Void, can_fail: false,
+        });
+
         // Second pass: check each function body
         for func in &program.functions {
+            // Only enforce privacy when checking main-module functions
+            self.check_privacy = !self.imported_items.contains(&func.name);
             self.check_function(func)?;
         }
+        self.check_privacy = false;
 
         Ok(())
     }
@@ -704,6 +860,14 @@ impl Checker {
                     }
                 };
 
+                // Check privacy — can't call priv functions from main module
+                if self.check_privacy && self.private_items.contains(name) {
+                    return Err(CompileError::new(
+                        format!("function '{}' is private in its module", name),
+                        *span,
+                    ));
+                }
+
                 if args.len() != func_info.param_types.len() {
                     return Err(CompileError::new(
                         format!(
@@ -788,6 +952,12 @@ impl Checker {
                         ));
                     }
                 };
+                if self.check_privacy && self.private_items.contains(enum_name) {
+                    return Err(CompileError::new(
+                        format!("enum '{}' is private in its module", enum_name),
+                        *span,
+                    ));
+                }
                 if !info.variants.contains(variant) {
                     return Err(CompileError::new(
                         format!("unknown variant '{}::{}'", enum_name, variant),
@@ -807,6 +977,12 @@ impl Checker {
                         ));
                     }
                 };
+                if self.check_privacy && self.private_items.contains(name) {
+                    return Err(CompileError::new(
+                        format!("struct '{}' is private in its module", name),
+                        *span,
+                    ));
+                }
                 // Check each provided field exists and types match
                 for (fname, fexpr) in fields {
                     let field_info = info.fields.iter().find(|(n, _)| n == fname);

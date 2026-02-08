@@ -351,3 +351,51 @@ fn test_missing_semicolon_error() {
     let err = parser.parse_program().unwrap_err();
     assert!(err.message.contains("expected"));
 }
+
+
+// ── Import & Priv Tests ─────────────────────────────────
+
+#[test]
+fn test_parse_import() {
+    let prog = parse(r#"import "math.ferro"; fn main() { print(1); }"#);
+    assert_eq!(prog.imports.len(), 1);
+    assert_eq!(prog.imports[0].path, "math.ferro");
+    assert_eq!(prog.functions.len(), 1);
+}
+
+#[test]
+fn test_parse_multiple_imports() {
+    let prog = parse(r#"import "a.ferro"; import "b.ferro"; fn main() { print(1); }"#);
+    assert_eq!(prog.imports.len(), 2);
+    assert_eq!(prog.imports[0].path, "a.ferro");
+    assert_eq!(prog.imports[1].path, "b.ferro");
+}
+
+#[test]
+fn test_parse_priv_fn() {
+    let prog = parse("priv fn secret() -> i64 { 42 } fn main() { print(1); }");
+    assert!(prog.functions[0].is_private);
+    assert_eq!(prog.functions[0].name, "secret");
+    assert!(!prog.functions[1].is_private);
+}
+
+#[test]
+fn test_parse_priv_struct() {
+    let prog = parse("priv struct Internal { x: i64 } fn main() { print(1); }");
+    assert!(prog.structs[0].is_private);
+    assert_eq!(prog.structs[0].name, "Internal");
+}
+
+#[test]
+fn test_parse_priv_enum() {
+    let prog = parse("priv enum Status { Active, Inactive } fn main() { print(1); }");
+    assert!(prog.enums[0].is_private);
+    assert_eq!(prog.enums[0].name, "Status");
+}
+
+#[test]
+fn test_parse_priv_comptime() {
+    let prog = parse("priv comptime let SECRET = 42; fn main() { print(SECRET); }");
+    assert!(prog.comptimes[0].is_private);
+    assert_eq!(prog.comptimes[0].name, "SECRET");
+}

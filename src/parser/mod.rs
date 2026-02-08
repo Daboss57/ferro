@@ -118,20 +118,98 @@ impl Parser {
 
     /// Parse a full program: a list of top-level items (functions and enums).
     pub fn parse_program(&mut self) -> Result<Program, CompileError> {
+        let mut imports = Vec::new();
         let mut functions = Vec::new();
         let mut enums = Vec::new();
         let mut structs = Vec::new();
+        let mut comptimes = Vec::new();
+
         while *self.peek() != TokenKind::Eof {
+            // Check for `priv` modifier
+            let is_private = if *self.peek() == TokenKind::Priv {
+                self.advance();
+                true
+            } else {
+                false
+            };
+
             match self.peek() {
-                TokenKind::Enum => enums.push(self.parse_enum_def()?),
-                TokenKind::Struct => structs.push(self.parse_struct_def()?),
-                _ => functions.push(self.parse_function()?),
+                TokenKind::Import => {
+                    if is_private {
+                        return Err(CompileError::new(
+                            "import declarations cannot be private",
+                            self.span(),
+                        ));
+                    }
+                    imports.push(self.parse_import()?);
+                }
+                TokenKind::Enum => {
+                    let mut e = self.parse_enum_def()?;
+                    e.is_private = is_private;
+                    enums.push(e);
+                }
+                TokenKind::Struct => {
+                    let mut s = self.parse_struct_def()?;
+                    s.is_private = is_private;
+                    structs.push(s);
+                }
+                TokenKind::Comptime => {
+                    let mut c = self.parse_comptime_def()?;
+                    c.is_private = is_private;
+                    comptimes.push(c);
+                }
+                _ => {
+                    let mut f = self.parse_function()?;
+                    f.is_private = is_private;
+                    functions.push(f);
+                }
             }
         }
-        Ok(Program { functions, enums, structs })
+        Ok(Program { imports, functions, enums, structs, comptimes })
     }
 
     // ── Functions ───────────────────────────────────────────
+
+    /// Parse: `import "path.ferro";`
+    fn parse_import(&mut self) -> Result<ImportDecl, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::Import)?;
+        // Expect a string literal for the path
+        let path = match self.peek().clone() {
+            TokenKind::StringLit(s) => {
+                self.advance();
+                s
+            }
+            _ => {
+                return Err(CompileError::new(
+                    format!("expected string path after 'import', found {:?}", self.peek()),
+                    self.span(),
+                ));
+            }
+        };
+        self.expect(&TokenKind::Semicolon)?;
+        Ok(ImportDecl {
+            path,
+            span: Span::new(start.start, self.span().start),
+        })
+    }
+
+    /// Parse: `comptime let NAME = expr;`
+    fn parse_comptime_def(&mut self) -> Result<ComptimeDef, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::Comptime)?;
+        self.expect(&TokenKind::Let)?;
+        let (name, _) = self.expect_ident()?;
+        self.expect(&TokenKind::Equals)?;
+        let value = self.parse_expr()?;
+        self.expect(&TokenKind::Semicolon)?;
+        Ok(ComptimeDef {
+            name,
+            value,
+            is_private: false, // set by parse_program
+            span: Span::new(start.start, self.span().start),
+        })
+    }
 
     /// Parse: `fn name(params) -> return_type { body }`
     fn parse_function(&mut self) -> Result<Function, CompileError> {
@@ -189,6 +267,7 @@ impl Parser {
             params,
             return_type,
             can_fail,
+            is_private: false, // set by parse_program
             body,
             span: Span::new(start.start, end.start),
         })
@@ -219,6 +298,7 @@ impl Parser {
         Ok(EnumDef {
             name,
             variants,
+            is_private: false, // set by parse_program
             span: Span::new(start.start, end.start),
         })
     }
@@ -254,6 +334,7 @@ impl Parser {
         Ok(StructDef {
             name,
             fields,
+            is_private: false, // set by parse_program
             span: Span::new(start.start, end.start),
         })
     }

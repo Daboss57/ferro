@@ -1,0 +1,25 @@
+// comptime in Ferro — compile-time evaluation
+// Values are computed at compile time and baked into the binary
+
+comptime let PAGE_SIZE = 4 * 1024;
+comptime let NUM_PAGES = 8;
+comptime let BUFFER_SIZE = PAGE_SIZE * NUM_PAGES;
+comptime let HEADER_BYTES = 64;
+comptime let USABLE = BUFFER_SIZE - HEADER_BYTES;
+
+fn main() {
+    print(PAGE_SIZE);
+    print(BUFFER_SIZE);
+    print(USABLE);
+
+    // Comptime values work in expressions like any constant
+    let remaining: i64 = USABLE - 1000;
+    print(remaining);
+
+    // Works in loops and conditions
+    for i in 0..NUM_PAGES {
+        if i == NUM_PAGES - 1 {
+            print(i);
+        }
+    }
+}

@@ -1295,3 +1295,567 @@ fn test_e2e_fail_string_message() {
         "10"
     );
 }
+
+// ── Phase 14: comptime ─────────────────────────────────────
+
+#[test]
+fn test_e2e_comptime_basic() {
+    assert_eq!(
+        compile_and_run(
+            "comptime let SIZE = 42;
+            fn main() {
+                print(SIZE);
+            }"
+        ),
+        "42"
+    );
+}
+
+#[test]
+fn test_e2e_comptime_arithmetic() {
+    assert_eq!(
+        compile_and_run(
+            "comptime let WIDTH = 4;
+            comptime let HEIGHT = 3;
+            comptime let AREA = WIDTH * HEIGHT;
+            fn main() {
+                print(AREA);
+            }"
+        ),
+        "12"
+    );
+}
+
+#[test]
+fn test_e2e_comptime_in_expression() {
+    assert_eq!(
+        compile_and_run(
+            "comptime let BASE = 10;
+            fn main() {
+                let x: i64 = BASE + 5;
+                print(x);
+            }"
+        ),
+        "15"
+    );
+}
+
+#[test]
+fn test_e2e_comptime_in_condition() {
+    assert_eq!(
+        compile_and_run(
+            "comptime let LIMIT = 5;
+            fn main() {
+                let x: i64 = 3;
+                if x < LIMIT {
+                    print(1);
+                } else {
+                    print(0);
+                }
+            }"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn test_e2e_comptime_in_loop() {
+    assert_eq!(
+        compile_and_run(
+            "comptime let N = 5;
+            fn main() {
+                let sum: i64 = 0;
+                for i in 0..N {
+                    sum = sum + i;
+                }
+                print(sum);
+            }"
+        ),
+        "10"
+    );
+}
+
+#[test]
+fn test_e2e_comptime_complex_expr() {
+    assert_eq!(
+        compile_and_run(
+            "comptime let PAGE_SIZE = 4 * 1024;
+            comptime let NUM_PAGES = 8;
+            comptime let TOTAL = PAGE_SIZE * NUM_PAGES;
+            fn main() {
+                print(TOTAL);
+            }"
+        ),
+        "32768"
+    );
+}
+
+#[test]
+fn test_e2e_comptime_as_function_arg() {
+    assert_eq!(
+        compile_and_run(
+            "comptime let FACTOR = 7;
+            fn multiply(x: i64, y: i64) -> i64 {
+                x * y
+            }
+            fn main() {
+                let result: i64 = multiply(6, FACTOR);
+                print(result);
+            }"
+        ),
+        "42"
+    );
+}
+
+
+// ── Multi-file helper ──────────────────────────────────
+
+/// Helper: compile a main file with imported modules, run the resulting exe, return stdout.
+/// `files` is a list of (filename, source_code) pairs. The first one is the main file.
+fn compile_and_run_multi(files: &[(&str, &str)]) -> String {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_dir = std::env::temp_dir().join("ferro_tests").join(format!("multi_{}", id));
+    fs::create_dir_all(&test_dir).unwrap();
+
+    // Write all files to the test directory
+    for (name, source) in files {
+        let file_path = test_dir.join(name);
+        fs::write(&file_path, source).unwrap();
+    }
+
+    let main_name = files[0].0;
+    let main_source = files[0].1;
+    let main_path = test_dir.join(main_name);
+    let asm_path = test_dir.join(format!("test_{}.s", id));
+    let exe_path = test_dir.join(format!("test_{}.exe", id));
+
+    // Resolve imports and merge modules
+    let (program, imported_privates) = ferro::modules::resolve_imports(main_source, &main_path)
+        .expect("module resolution error");
+
+    // Sema check
+    let mut checker = ferro::sema::checker::Checker::new();
+    checker.set_imported_privates(&imported_privates);
+    checker.check_program(&program).expect("type check error");
+
+    // Codegen
+    let codegen = ferro::codegen::Codegen::new();
+    let asm = codegen.generate(&program);
+    fs::write(&asm_path, &asm).unwrap();
+
+    // Assemble and link
+    let status = Command::new("gcc")
+        .args([
+            asm_path.to_str().unwrap(),
+            "-o",
+            exe_path.to_str().unwrap(),
+            "-no-pie",
+        ])
+        .status()
+        .expect("failed to run gcc");
+    assert!(status.success(), "gcc failed");
+
+    // Run and capture output
+    let output = Command::new(exe_path.to_str().unwrap())
+        .output()
+        .expect("failed to run compiled program");
+
+    // Cleanup
+    let _ = fs::remove_dir_all(&test_dir);
+
+    String::from_utf8(output.stdout).unwrap().replace("\r\n", "\n").trim().to_string()
+}
+
+/// Helper: compile multi-file and expect a sema error.
+fn compile_multi_expect_error(files: &[(&str, &str)], expected_substr: &str) {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_dir = std::env::temp_dir().join("ferro_tests").join(format!("multi_{}", id));
+    fs::create_dir_all(&test_dir).unwrap();
+
+    for (name, source) in files {
+        let file_path = test_dir.join(name);
+        fs::write(&file_path, source).unwrap();
+    }
+
+    let main_source = files[0].1;
+    let main_path = test_dir.join(files[0].0);
+
+    let result = ferro::modules::resolve_imports(main_source, &main_path);
+    match result {
+        Ok((program, imported_privates)) => {
+            let mut checker = ferro::sema::checker::Checker::new();
+            checker.set_imported_privates(&imported_privates);
+            match checker.check_program(&program) {
+                Err(e) => {
+                    assert!(
+                        e.message.contains(expected_substr),
+                        "expected error containing '{}', got '{}'",
+                        expected_substr,
+                        e.message
+                    );
+                }
+                Ok(()) => panic!("expected error containing '{}', but check passed", expected_substr),
+            }
+        }
+        Err(e) => {
+            assert!(
+                e.message.contains(expected_substr),
+                "expected error containing '{}', got '{}'",
+                expected_substr,
+                e.message
+            );
+        }
+    }
+
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+// ── Module Tests: E2E ──────────────────────────────────
+
+#[test]
+fn test_e2e_import_basic() {
+    assert_eq!(
+        compile_and_run_multi(&[
+            ("main.ferro", r#"import "math.ferro";
+fn main() {
+    let x = add(3, 4);
+    print(x);
+}"#),
+            ("math.ferro", r#"fn add(a: i64, b: i64) -> i64 {
+    a + b
+}"#),
+        ]),
+        "7"
+    );
+}
+
+#[test]
+fn test_e2e_import_multiple_functions() {
+    assert_eq!(
+        compile_and_run_multi(&[
+            ("main.ferro", r#"import "utils.ferro";
+fn main() {
+    print(double(5));
+    print(triple(5));
+}"#),
+            ("utils.ferro", r#"fn double(x: i64) -> i64 { x * 2 }
+fn triple(x: i64) -> i64 { x * 3 }"#),
+        ]),
+        "10\n15"
+    );
+}
+
+#[test]
+fn test_e2e_import_struct() {
+    assert_eq!(
+        compile_and_run_multi(&[
+            ("main.ferro", r#"import "types.ferro";
+fn main() {
+    let p = Point { x: 10, y: 20 };
+    print(p.x);
+    print(p.y);
+}"#),
+            ("types.ferro", r#"struct Point { x: i64, y: i64 }"#),
+        ]),
+        "10\n20"
+    );
+}
+
+#[test]
+fn test_e2e_import_enum() {
+    assert_eq!(
+        compile_and_run_multi(&[
+            ("main.ferro", r#"import "colors.ferro";
+fn main() {
+    let c = Color::Green;
+    match c {
+        Color::Red => { print(1); }
+        Color::Green => { print(2); }
+        Color::Blue => { print(3); }
+    }
+}"#),
+            ("colors.ferro", r#"enum Color { Red, Green, Blue }"#),
+        ]),
+        "2"
+    );
+}
+
+#[test]
+fn test_e2e_import_comptime() {
+    assert_eq!(
+        compile_and_run_multi(&[
+            ("main.ferro", r#"import "config.ferro";
+fn main() {
+    print(MAX_SIZE);
+}"#),
+            ("config.ferro", r#"comptime let MAX_SIZE = 1024;"#),
+        ]),
+        "1024"
+    );
+}
+
+#[test]
+fn test_e2e_import_multiple_files() {
+    assert_eq!(
+        compile_and_run_multi(&[
+            ("main.ferro", r#"import "math.ferro";
+import "io.ferro";
+fn main() {
+    let x = add(10, 20);
+    show(x);
+}"#),
+            ("math.ferro", r#"fn add(a: i64, b: i64) -> i64 { a + b }"#),
+            ("io.ferro", r#"fn show(x: i64) { print(x); }"#),
+        ]),
+        "30"
+    );
+}
+
+#[test]
+fn test_e2e_import_chain() {
+    // main imports a.ferro, which imports b.ferro
+    assert_eq!(
+        compile_and_run_multi(&[
+            ("main.ferro", r#"import "a.ferro";
+fn main() {
+    print(get_value());
+}"#),
+            ("a.ferro", r#"import "b.ferro";
+fn get_value() -> i64 { base_value() + 1 }"#),
+            ("b.ferro", r#"fn base_value() -> i64 { 41 }"#),
+        ]),
+        "42"
+    );
+}
+
+#[test]
+fn test_e2e_priv_function_within_module() {
+    // priv functions work within the same module
+    assert_eq!(
+        compile_and_run_multi(&[
+            ("main.ferro", r#"import "lib.ferro";
+fn main() {
+    print(public_fn());
+}"#),
+            ("lib.ferro", r#"priv fn helper() -> i64 { 10 }
+fn public_fn() -> i64 { helper() + 5 }"#),
+        ]),
+        "15"
+    );
+}
+
+// ── Module Tests: Error Cases ──────────────────────────
+
+#[test]
+fn test_e2e_import_priv_function_rejected() {
+    compile_multi_expect_error(
+        &[
+            ("main.ferro", r#"import "lib.ferro";
+fn main() {
+    let x = secret();
+    print(x);
+}"#),
+            ("lib.ferro", r#"priv fn secret() -> i64 { 42 }
+fn public_fn() -> i64 { 100 }"#),
+        ],
+        "private",
+    );
+}
+
+#[test]
+fn test_e2e_import_priv_struct_rejected() {
+    compile_multi_expect_error(
+        &[
+            ("main.ferro", r#"import "types.ferro";
+fn main() {
+    let p = Internal { x: 1 };
+}"#),
+            ("types.ferro", r#"priv struct Internal { x: i64 }"#),
+        ],
+        "private",
+    );
+}
+
+#[test]
+fn test_e2e_import_priv_enum_rejected() {
+    compile_multi_expect_error(
+        &[
+            ("main.ferro", r#"import "types.ferro";
+fn main() {
+    let s = Status::Active;
+}"#),
+            ("types.ferro", r#"priv enum Status { Active, Inactive }"#),
+        ],
+        "private",
+    );
+}
+
+#[test]
+fn test_e2e_import_file_not_found() {
+    compile_multi_expect_error(
+        &[
+            ("main.ferro", r#"import "nonexistent.ferro";
+fn main() { print(1); }"#),
+        ],
+        "could not find",
+    );
+}
+
+// ── Stdlib: Math Builtins ──────────────────────────────
+
+#[test]
+fn test_e2e_abs_positive() {
+    assert_eq!(compile_and_run("fn main() { print(abs(42)); }"), "42");
+}
+
+#[test]
+fn test_e2e_abs_negative() {
+    assert_eq!(compile_and_run("fn main() { print(abs(-42)); }"), "42");
+}
+
+#[test]
+fn test_e2e_abs_zero() {
+    assert_eq!(compile_and_run("fn main() { print(abs(0)); }"), "0");
+}
+
+#[test]
+fn test_e2e_min() {
+    assert_eq!(compile_and_run("fn main() { print(min(5, 3)); print(min(1, 10)); }"), "3\n1");
+}
+
+#[test]
+fn test_e2e_max() {
+    assert_eq!(compile_and_run("fn main() { print(max(5, 3)); print(max(1, 10)); }"), "5\n10");
+}
+
+#[test]
+fn test_e2e_pow() {
+    assert_eq!(compile_and_run("fn main() { print(pow(2, 10)); }"), "1024");
+}
+
+#[test]
+fn test_e2e_pow_zero_exp() {
+    assert_eq!(compile_and_run("fn main() { print(pow(5, 0)); }"), "1");
+}
+
+#[test]
+fn test_e2e_pow_one() {
+    assert_eq!(compile_and_run("fn main() { print(pow(7, 1)); }"), "7");
+}
+
+// ── Stdlib: String Builtins ────────────────────────────
+
+#[test]
+fn test_e2e_to_str() {
+    assert_eq!(compile_and_run("fn main() { print(to_str(42)); }"), "42");
+}
+
+#[test]
+fn test_e2e_to_str_negative() {
+    assert_eq!(compile_and_run("fn main() { print(to_str(-100)); }"), "-100");
+}
+
+#[test]
+fn test_e2e_char_at() {
+    assert_eq!(compile_and_run(r#"fn main() { print(char_at("ABC", 0)); print(char_at("ABC", 2)); }"#), "65\n67");
+}
+
+#[test]
+fn test_e2e_contains_true() {
+    assert_eq!(compile_and_run(r#"fn main() { print(contains("hello world", "world")); }"#), "true");
+}
+
+#[test]
+fn test_e2e_contains_false() {
+    assert_eq!(compile_and_run(r#"fn main() { print(contains("hello world", "xyz")); }"#), "false");
+}
+
+#[test]
+fn test_e2e_starts_with_true() {
+    assert_eq!(compile_and_run(r#"fn main() { print(starts_with("hello world", "hello")); }"#), "true");
+}
+
+#[test]
+fn test_e2e_starts_with_false() {
+    assert_eq!(compile_and_run(r#"fn main() { print(starts_with("hello world", "world")); }"#), "false");
+}
+
+// ── Stdlib: System Builtins ────────────────────────────
+
+#[test]
+fn test_e2e_time_returns_nonzero() {
+    // time() should return a large positive number (unix timestamp)
+    let output = compile_and_run("fn main() { let t = time(); if t > 0 { print(1); } else { print(0); } }");
+    assert_eq!(output, "1");
+}
+
+#[test]
+fn test_e2e_file_exists_true() {
+    // file_exists should detect the compiled .exe file itself in the temp dir
+    // We create a marker file in the cwd that the exe will check
+    fs::write("_ferro_exists_test.txt", "hi").unwrap();
+    let output = compile_and_run(r#"fn main() { print(file_exists("_ferro_exists_test.txt")); }"#);
+    let _ = fs::remove_file("_ferro_exists_test.txt");
+    assert_eq!(output, "true");
+}
+
+#[test]
+fn test_e2e_file_exists_false() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print(file_exists("nonexistent_file_12345.xyz")); }"#),
+        "false"
+    );
+}
+
+// ── Stdlib: I/O Builtins ───────────────────────────────
+
+#[test]
+fn test_e2e_write_and_read_file() {
+    let output = compile_and_run(r#"
+fn main() -> i64 ! str {
+    try write_file("_ferro_test_io.txt", "hello ferro");
+    let content = try read_file("_ferro_test_io.txt");
+    print(content);
+    0
+}"#);
+    assert_eq!(output, "hello ferro");
+    // Clean up
+    let _ = std::fs::remove_file("_ferro_test_io.txt");
+}
+
+#[test]
+fn test_e2e_eprint_does_not_appear_in_stdout() {
+    // eprint goes to stderr, so stdout should be empty except for the regular print
+    let output = compile_and_run(r#"fn main() { eprint("error msg"); print("ok"); }"#);
+    assert_eq!(output, "ok");
+}
+
+// ── Stdlib: Math + Expressions ─────────────────────────
+
+#[test]
+fn test_e2e_abs_in_expression() {
+    assert_eq!(compile_and_run("fn main() { print(abs(-5) + abs(-3)); }"), "8");
+}
+
+#[test]
+fn test_e2e_min_max_chained() {
+    assert_eq!(compile_and_run("fn main() { print(max(min(10, 20), 15)); }"), "15");
+}
+
+#[test]
+fn test_e2e_pow_in_expression() {
+    assert_eq!(compile_and_run("fn main() { print(pow(2, 3) * 5); }"), "40");
+}
+
+#[test]
+fn test_e2e_contains_in_if() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { if contains("abcdef", "cd") { print(1); } else { print(0); } }"#),
+        "1"
+    );
+}
+
+#[test]
+fn test_e2e_to_str_with_len() {
+    assert_eq!(compile_and_run("fn main() { print(len(to_str(12345))); }"), "5");
+}

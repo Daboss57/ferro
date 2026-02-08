@@ -7,9 +7,27 @@ use crate::error::Span;
 /// A complete Ferro program: a list of top-level items.
 #[derive(Debug)]
 pub struct Program {
+    pub imports: Vec<ImportDecl>,
     pub functions: Vec<Function>,
     pub enums: Vec<EnumDef>,
     pub structs: Vec<StructDef>,
+    pub comptimes: Vec<ComptimeDef>,
+}
+
+/// An import declaration: `import "path.ferro";`
+#[derive(Debug)]
+pub struct ImportDecl {
+    pub path: String,
+    pub span: Span,
+}
+
+/// A comptime constant: `comptime let NAME = expr;`
+#[derive(Debug)]
+pub struct ComptimeDef {
+    pub name: String,
+    pub value: Expr,
+    pub is_private: bool,
+    pub span: Span,
 }
 
 /// An enum definition: `enum Color { Red, Green, Blue }`
@@ -17,6 +35,7 @@ pub struct Program {
 pub struct EnumDef {
     pub name: String,
     pub variants: Vec<String>,
+    pub is_private: bool,
     pub span: Span,
 }
 
@@ -25,6 +44,7 @@ pub struct EnumDef {
 pub struct StructDef {
     pub name: String,
     pub fields: Vec<StructField>,
+    pub is_private: bool,
     pub span: Span,
 }
 
@@ -44,6 +64,7 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_type: Option<String>, // None means no return type (void)
     pub can_fail: bool,              // true if `-> T ! str`
+    pub is_private: bool,            // true if `priv fn`
     pub body: Block,
     pub span: Span,
 }

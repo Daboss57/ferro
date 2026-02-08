@@ -27,6 +27,9 @@ pub enum TokenKind {
     Defer,    // defer
     Try,      // try
     Fail,     // fail
+    Comptime, // comptime
+    Import,   // import
+    Priv,     // priv
     Return,   // return
     True,     // true
     False,    // false
@@ -95,6 +98,9 @@ pub fn lookup_keyword(word: &str) -> Option<TokenKind> {
         "defer"    => Some(TokenKind::Defer),
         "try"      => Some(TokenKind::Try),
         "fail"     => Some(TokenKind::Fail),
+        "comptime" => Some(TokenKind::Comptime),
+        "import"   => Some(TokenKind::Import),
+        "priv"     => Some(TokenKind::Priv),
         "return"   => Some(TokenKind::Return),
         "true"     => Some(TokenKind::True),
         "false"    => Some(TokenKind::False),

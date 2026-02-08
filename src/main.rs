@@ -65,14 +65,39 @@ fn compile(filename: &str) {
 
     // Phase 3: Parse tokens into an AST
     let mut parser = ferro::parser::Parser::new(tokens);
-    let program = match parser.parse_program() {
+    let initial_program = match parser.parse_program() {
         Ok(p) => p,
         Err(e) => {
             e.report(&source, filename);
             process::exit(1);
         }
     };
-    println!("  Parsed {} function(s), {} enum(s), {} struct(s)", program.functions.len(), program.enums.len(), program.structs.len());
+
+    // Phase 11: Resolve imports and merge modules
+    let (program, imported_privates) = if initial_program.imports.is_empty() {
+        // No imports — use the program as-is
+        println!("  Parsed {} function(s), {} enum(s), {} struct(s), {} comptime(s)", 
+            initial_program.functions.len(), initial_program.enums.len(), 
+            initial_program.structs.len(), initial_program.comptimes.len());
+        (initial_program, Vec::new())
+    } else {
+        // Has imports — use module resolver
+        let file_path = Path::new(filename);
+        match ferro::modules::resolve_imports(&source, file_path) {
+            Ok((merged, imported_privates)) => {
+                println!("  Resolved {} import(s)", initial_program.imports.len());
+                println!("  Merged: {} function(s), {} enum(s), {} struct(s), {} comptime(s)", 
+                    merged.functions.len(), merged.enums.len(), 
+                    merged.structs.len(), merged.comptimes.len());
+                (merged, imported_privates)
+            }
+            Err(e) => {
+                e.report(&source, filename);
+                process::exit(1);
+            }
+        }
+    };
+
     println!();
     println!("--- AST ---");
     println!("{}", ferro::ast::pretty::pretty_print(&program));
@@ -80,6 +105,7 @@ fn compile(filename: &str) {
 
     // Phase 4: Semantic analysis (type checking, name resolution)
     let mut checker = ferro::sema::checker::Checker::new();
+    checker.set_imported_privates(&imported_privates);
     if let Err(e) = checker.check_program(&program) {
         e.report(&source, filename);
         process::exit(1);

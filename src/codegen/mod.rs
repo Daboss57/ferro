@@ -61,6 +61,8 @@ pub struct Codegen {
     failable_funcs: HashMap<String, bool>,
     /// Whether the current function being generated is failable.
     current_failable: bool,
+    /// Comptime constants: name → evaluated integer value.
+    comptime_values: HashMap<String, i64>,
 }
 
 impl Codegen {
@@ -78,6 +80,7 @@ impl Codegen {
             deferred: Vec::new(),
             failable_funcs: HashMap::new(),
             current_failable: false,
+            comptime_values: HashMap::new(),
         }
     }
 
@@ -185,6 +188,42 @@ impl Codegen {
         }
     }
 
+    /// Evaluate a compile-time constant expression.
+    fn eval_comptime_expr(expr: &Expr, known: &HashMap<String, i64>) -> i64 {
+        match expr {
+            Expr::IntLit { value, .. } => *value,
+            Expr::BoolLit { value, .. } => if *value { 1 } else { 0 },
+            Expr::Ident { name, .. } => *known.get(name).unwrap_or(&0),
+            Expr::UnaryOp { op, operand, .. } => {
+                let v = Self::eval_comptime_expr(operand, known);
+                match op {
+                    UnaryOp::Neg => -v,
+                    UnaryOp::Not => if v == 0 { 1 } else { 0 },
+                }
+            }
+            Expr::BinaryOp { op, left, right, .. } => {
+                let l = Self::eval_comptime_expr(left, known);
+                let r = Self::eval_comptime_expr(right, known);
+                match op {
+                    BinOp::Add => l + r,
+                    BinOp::Sub => l - r,
+                    BinOp::Mul => l * r,
+                    BinOp::Div => if r != 0 { l / r } else { 0 },
+                    BinOp::Mod => if r != 0 { l % r } else { 0 },
+                    BinOp::Eq  => if l == r { 1 } else { 0 },
+                    BinOp::Neq => if l != r { 1 } else { 0 },
+                    BinOp::Lt  => if l < r  { 1 } else { 0 },
+                    BinOp::Gt  => if l > r  { 1 } else { 0 },
+                    BinOp::Lte => if l <= r { 1 } else { 0 },
+                    BinOp::Gte => if l >= r { 1 } else { 0 },
+                    BinOp::And => if l != 0 && r != 0 { 1 } else { 0 },
+                    BinOp::Or  => if l != 0 || r != 0 { 1 } else { 0 },
+                }
+            }
+            _ => 0,
+        }
+    }
+
     // ── Program ─────────────────────────────────────────
 
     /// Generate assembly for an entire program.
@@ -205,6 +244,12 @@ impl Codegen {
             self.struct_fields.insert(struct_def.name.clone(), fields);
         }
 
+        // Evaluate and register comptime constants
+        for ct in &program.comptimes {
+            let val = Self::eval_comptime_expr(&ct.value, &self.comptime_values);
+            self.comptime_values.insert(ct.name.clone(), val);
+        }
+
         // Collect function return types so infer_type can resolve Call exprs.
         for func in &program.functions {
             let rt = match &func.return_type {
@@ -214,12 +259,41 @@ impl Codegen {
             self.func_return_types.insert(func.name.clone(), rt);
             self.failable_funcs.insert(func.name.clone(), func.can_fail);
         }
+
+        // Register built-in function return types
+        self.func_return_types.insert("print".to_string(), ValType::Void);
+        self.func_return_types.insert("len".to_string(), ValType::Int);
+        self.func_return_types.insert("abs".to_string(), ValType::Int);
+        self.func_return_types.insert("min".to_string(), ValType::Int);
+        self.func_return_types.insert("max".to_string(), ValType::Int);
+        self.func_return_types.insert("pow".to_string(), ValType::Int);
+        self.func_return_types.insert("rand".to_string(), ValType::Int);
+        self.func_return_types.insert("to_str".to_string(), ValType::Str);
+        self.func_return_types.insert("parse_int".to_string(), ValType::Int);
+        self.func_return_types.insert("char_at".to_string(), ValType::Int);
+        self.func_return_types.insert("contains".to_string(), ValType::Bool);
+        self.func_return_types.insert("starts_with".to_string(), ValType::Bool);
+        self.func_return_types.insert("read_line".to_string(), ValType::Str);
+        self.func_return_types.insert("read_file".to_string(), ValType::Str);
+        self.func_return_types.insert("write_file".to_string(), ValType::Void);
+        self.func_return_types.insert("file_exists".to_string(), ValType::Bool);
+        self.func_return_types.insert("eprint".to_string(), ValType::Void);
+        self.func_return_types.insert("exit".to_string(), ValType::Void);
+        self.func_return_types.insert("time".to_string(), ValType::Int);
+        self.func_return_types.insert("sleep".to_string(), ValType::Void);
+        // Register failable builtins
+        self.failable_funcs.insert("parse_int".to_string(), true);
+        self.failable_funcs.insert("read_file".to_string(), true);
+        self.failable_funcs.insert("write_file".to_string(), true);
         // Emit text section
         writeln!(self.output, "    .section .text").unwrap();
 
         for func in &program.functions {
             self.gen_function(func);
         }
+
+        // Emit built-in helper functions for complex operations
+        self.emit_builtin_helpers();
 
         // Emit data section with string literals
         if !self.string_literals.is_empty() {
@@ -249,8 +323,10 @@ impl Codegen {
         // Plus 32 bytes shadow space for any calls we make
         let frame_size = align16((local_count as i64) * 8 + 32);
 
-        // Function label
-        writeln!(self.output, "    .globl {}", func.name).unwrap();
+        // Function label — priv functions don't get .globl
+        if !func.is_private {
+            writeln!(self.output, "    .globl {}", func.name).unwrap();
+        }
         self.emit_label(&func.name);
 
         // Prologue: save old base pointer, set up new frame
@@ -283,6 +359,118 @@ impl Codegen {
 
         // Epilogue
         self.emit_label(&format!(".L{}_epilogue", func.name));
+        self.emit("movq %rbp, %rsp");
+        self.emit("popq %rbp");
+        self.emit("ret");
+        writeln!(self.output).unwrap();
+    }
+
+    /// Emit assembly helper functions for complex built-in operations.
+    fn emit_builtin_helpers(&mut self) {
+        // __ferro_read_file(path: *const u8) -> (RAX: *const u8, RDX: error flag)
+        // Reads entire file into malloc'd buffer. Returns error string if fopen fails.
+        let rf_err_idx = self.string_literals.len();
+        self.string_literals.push("could not open file".to_string());
+        let rf_mode_idx = self.string_literals.len();
+        self.string_literals.push("rb".to_string());
+
+        writeln!(self.output, "__ferro_read_file:").unwrap();
+        self.emit("pushq %rbp");
+        self.emit("movq %rsp, %rbp");
+        self.emit("subq $64, %rsp");  // local space
+        // Save path
+        self.emit("movq %rcx, -8(%rbp)");
+        // fopen(path, "rb")
+        self.emit(&format!("leaq .Lstr_{}(%rip), %rdx", rf_mode_idx));
+        self.emit("call fopen");
+        self.emit("testq %rax, %rax");
+        self.emit("jnz .Lrf_opened");
+        // Error: could not open
+        self.emit(&format!("leaq .Lstr_{}(%rip), %rax", rf_err_idx));
+        self.emit("movq $1, %rdx");
+        self.emit("jmp .Lrf_done");
+
+        self.emit_label(".Lrf_opened");
+        self.emit("movq %rax, -16(%rbp)"); // save FILE*
+        // fseek(file, 0, SEEK_END=2)
+        self.emit("movq %rax, %rcx");
+        self.emit("xorl %edx, %edx");
+        self.emit("movq $2, %r8");
+        self.emit("call fseek");
+        // ftell(file) → size
+        self.emit("movq -16(%rbp), %rcx");
+        self.emit("call ftell");
+        self.emit("movq %rax, -24(%rbp)"); // save size
+        // fseek(file, 0, SEEK_SET=0)
+        self.emit("movq -16(%rbp), %rcx");
+        self.emit("xorl %edx, %edx");
+        self.emit("xorl %r8d, %r8d");
+        self.emit("call fseek");
+        // malloc(size + 1)
+        self.emit("movq -24(%rbp), %rcx");
+        self.emit("incq %rcx");
+        self.emit("call malloc");
+        self.emit("movq %rax, -32(%rbp)"); // save buffer
+        // fread(buf, 1, size, file)
+        self.emit("movq %rax, %rcx");
+        self.emit("movq $1, %rdx");
+        self.emit("movq -24(%rbp), %r8");
+        self.emit("movq -16(%rbp), %r9");
+        self.emit("call fread");
+        // null-terminate
+        self.emit("movq -32(%rbp), %rax");
+        self.emit("movq -24(%rbp), %rcx");
+        self.emit("movb $0, (%rax,%rcx,1)");
+        // fclose(file)
+        self.emit("movq -16(%rbp), %rcx");
+        self.emit("pushq %rax");
+        self.emit("call fclose");
+        self.emit("popq %rax");
+        // Return: RAX = buffer, RDX = 0 (success)
+        self.emit("xorl %edx, %edx");
+
+        self.emit_label(".Lrf_done");
+        self.emit("movq %rbp, %rsp");
+        self.emit("popq %rbp");
+        self.emit("ret");
+        writeln!(self.output).unwrap();
+
+        // __ferro_write_file(path: RCX, content: RDX) -> (RAX: error msg, RDX: error flag)
+        let wf_err_idx = self.string_literals.len();
+        self.string_literals.push("could not open file for writing".to_string());
+        let wf_mode_idx = self.string_literals.len();
+        self.string_literals.push("w".to_string());
+
+        writeln!(self.output, "__ferro_write_file:").unwrap();
+        self.emit("pushq %rbp");
+        self.emit("movq %rsp, %rbp");
+        self.emit("subq $48, %rsp");
+        self.emit("movq %rcx, -8(%rbp)");  // save path
+        self.emit("movq %rdx, -16(%rbp)"); // save content
+        // fopen(path, "w")
+        self.emit(&format!("leaq .Lstr_{}(%rip), %rdx", wf_mode_idx));
+        self.emit("call fopen");
+        self.emit("testq %rax, %rax");
+        self.emit("jnz .Lwf_opened");
+        // Error
+        self.emit(&format!("leaq .Lstr_{}(%rip), %rax", wf_err_idx));
+        self.emit("movq $1, %rdx");
+        self.emit("jmp .Lwf_done");
+
+        self.emit_label(".Lwf_opened");
+        self.emit("movq %rax, -24(%rbp)"); // save FILE*
+        // fputs(content, file)
+        self.emit("movq -16(%rbp), %rcx"); // content
+        self.emit("movq %rax, %rdx");      // file
+        self.emit("call fputs");
+        // fclose(file)
+        self.emit("movq -24(%rbp), %rcx");
+        self.emit("call fclose");
+        // Success
+        self.emit("xorl %eax, %eax");
+        self.emit("xorl %edx, %edx");
+
+        self.emit_label(".Lwf_done");
         self.emit("movq %rbp, %rsp");
         self.emit("popq %rbp");
         self.emit("ret");
@@ -605,8 +793,13 @@ impl Codegen {
             }
 
             Expr::Ident { name, span: _ } => {
-                let offset = self.locals[name].offset;
-                self.emit(&format!("movq {}(%rbp), %rax", offset));
+                // Check if it's a comptime constant first
+                if let Some(val) = self.comptime_values.get(name) {
+                    self.emit(&format!("movq ${}, %rax", val));
+                } else {
+                    let offset = self.locals[name].offset;
+                    self.emit(&format!("movq {}(%rbp), %rax", offset));
+                }
             }
 
             Expr::UnaryOp { op, operand, .. } => {
@@ -759,6 +952,278 @@ impl Codegen {
                     self.gen_expr(&args[0]);
                     self.emit("movq %rax, %rcx");
                     self.emit("call strlen");
+                    return;
+                }
+
+                // ── Built-in: abs(x) ───────────────────────────
+                if name == "abs" {
+                    self.gen_expr(&args[0]);
+                    // if rax < 0, negate it
+                    self.emit("movq %rax, %rcx");
+                    self.emit("negq %rcx");
+                    self.emit("testq %rax, %rax");
+                    self.emit("cmovlq %rcx, %rax"); // if negative, use negated
+                    return;
+                }
+
+                // ── Built-in: min(a, b) ────────────────────────
+                if name == "min" {
+                    self.gen_expr(&args[0]);
+                    self.emit("pushq %rax");
+                    self.gen_expr(&args[1]);
+                    self.emit("popq %rcx"); // rcx = a, rax = b
+                    self.emit("cmpq %rax, %rcx");
+                    self.emit("cmovlq %rcx, %rax"); // if a < b, rax = a
+                    return;
+                }
+
+                // ── Built-in: max(a, b) ────────────────────────
+                if name == "max" {
+                    self.gen_expr(&args[0]);
+                    self.emit("pushq %rax");
+                    self.gen_expr(&args[1]);
+                    self.emit("popq %rcx"); // rcx = a, rax = b
+                    self.emit("cmpq %rax, %rcx");
+                    self.emit("cmovgq %rcx, %rax"); // if a > b, rax = a
+                    return;
+                }
+
+                // ── Built-in: pow(base, exp) ───────────────────
+                if name == "pow" {
+                    // Integer power via loop: result = 1; while exp > 0 { result *= base; exp--; }
+                    self.gen_expr(&args[0]);
+                    self.emit("pushq %rax"); // save base
+                    self.gen_expr(&args[1]);
+                    self.emit("movq %rax, %rcx"); // rcx = exp
+                    self.emit("popq %rdx");       // rdx = base
+                    self.emit("movq $1, %rax");   // rax = result = 1
+                    let loop_label = self.new_label("pow_loop");
+                    let done_label = self.new_label("pow_done");
+                    self.emit_label(&loop_label);
+                    self.emit("testq %rcx, %rcx");
+                    self.emit(&format!("jle {}", done_label));
+                    self.emit("imulq %rdx, %rax"); // result *= base
+                    self.emit("decq %rcx");
+                    self.emit(&format!("jmp {}", loop_label));
+                    self.emit_label(&done_label);
+                    return;
+                }
+
+                // ── Built-in: rand() ───────────────────────────
+                if name == "rand" {
+                    self.emit("call rand");
+                    // rand() returns int in EAX, sign-extend to 64-bit
+                    self.emit("cltq");
+                    return;
+                }
+
+                // ── Built-in: to_str(x) ────────────────────────
+                if name == "to_str" {
+                    // sprintf(buffer, "%lld", x) — allocate buffer on stack
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %r8");  // r8 = the number to convert
+                    // Allocate 32 bytes on stack for the string buffer
+                    self.emit("subq $32, %rsp");
+                    self.emit("movq %rsp, %rcx"); // rcx = buffer pointer
+                    let fmt_idx = self.string_literals.len();
+                    self.string_literals.push("%lld".to_string());
+                    self.emit(&format!("leaq .Lstr_{}(%rip), %rdx", fmt_idx)); // rdx = format
+                    self.emit("call sprintf");
+                    self.emit("movq %rsp, %rax"); // return pointer to buffer
+                    // Note: buffer lives on stack — valid until function returns
+                    return;
+                }
+
+                // ── Built-in: parse_int(s) ─────────────────────
+                if name == "parse_int" {
+                    // atoll(s) — convert string to i64, return 0 on invalid
+                    // We make this failable: check if string is empty or non-numeric
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx"); // rcx = string ptr
+                    self.emit("call atoll");
+                    // RAX now has the parsed value, RDX = 0 (success)
+                    self.emit("xorl %edx, %edx");
+                    return;
+                }
+
+                // ── Built-in: char_at(s, i) ────────────────────
+                if name == "char_at" {
+                    self.gen_expr(&args[0]);
+                    self.emit("pushq %rax"); // save string ptr
+                    self.gen_expr(&args[1]);
+                    self.emit("movq %rax, %rcx"); // rcx = index
+                    self.emit("popq %rdx");       // rdx = string ptr
+                    self.emit("movzbq (%rdx,%rcx,1), %rax"); // load byte at index
+                    return;
+                }
+
+                // ── Built-in: contains(haystack, needle) ───────
+                if name == "contains" {
+                    self.gen_expr(&args[0]);
+                    self.emit("pushq %rax");
+                    self.gen_expr(&args[1]);
+                    self.emit("movq %rax, %rdx"); // rdx = needle
+                    self.emit("popq %rcx");       // rcx = haystack
+                    self.emit("call strstr");
+                    // strstr returns NULL (0) if not found, pointer if found
+                    self.emit("testq %rax, %rax");
+                    self.emit("setne %al");
+                    self.emit("movzbq %al, %rax");
+                    return;
+                }
+
+                // ── Built-in: starts_with(s, prefix) ──────────
+                if name == "starts_with" {
+                    self.gen_expr(&args[1]);
+                    self.emit("pushq %rax"); // save prefix
+                    // Get length of prefix
+                    self.emit("movq %rax, %rcx");
+                    self.emit("call strlen");
+                    self.emit("pushq %rax"); // save prefix_len
+                    // Call strncmp(s, prefix, prefix_len)
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx"); // rcx = s
+                    self.emit("popq %r8");        // r8 = prefix_len
+                    self.emit("popq %rdx");       // rdx = prefix
+                    self.emit("call strncmp");
+                    // strncmp returns 0 if equal
+                    self.emit("testq %rax, %rax");
+                    self.emit("sete %al");
+                    self.emit("movzbq %al, %rax");
+                    return;
+                }
+
+                // ── Built-in: read_line() ──────────────────────
+                if name == "read_line" {
+                    // fgets(buffer, size, stdin) — read line from stdin
+                    // Allocate 1024-byte buffer on stack
+                    self.emit("subq $1024, %rsp");
+                    self.emit("movq %rsp, %rcx");     // rcx = buffer
+                    self.emit("movq $1024, %rdx");     // rdx = size
+                    // Get stdin: __acrt_iob_func(0) on Windows
+                    self.emit("pushq %rcx");
+                    self.emit("pushq %rdx");
+                    self.emit("xorl %ecx, %ecx");      // 0 = stdin
+                    self.emit("call __acrt_iob_func");
+                    self.emit("movq %rax, %r8");        // r8 = stdin FILE*
+                    self.emit("popq %rdx");
+                    self.emit("popq %rcx");
+                    self.emit("call fgets");
+                    // Strip trailing newline if present
+                    self.emit("movq %rsp, %rcx");       // rcx = buffer
+                    self.emit("call strlen");
+                    self.emit("testq %rax, %rax");
+                    let skip_label = self.new_label("rl_skip");
+                    self.emit(&format!("jz {}", skip_label));
+                    self.emit("decq %rax");
+                    self.emit("movq %rsp, %rcx");
+                    self.emit("cmpb $10, (%rcx,%rax,1)"); // check for '\n'
+                    let no_nl_label = self.new_label("rl_no_nl");
+                    self.emit(&format!("jne {}", no_nl_label));
+                    self.emit("movb $0, (%rcx,%rax,1)"); // replace '\n' with '\0'
+                    self.emit_label(&no_nl_label);
+                    // Also strip '\r' if present (Windows CRLF)
+                    self.emit("testq %rax, %rax");
+                    let skip_cr_label = self.new_label("rl_skip_cr");
+                    self.emit(&format!("jz {}", skip_cr_label));
+                    self.emit("decq %rax");
+                    self.emit("cmpb $13, (%rcx,%rax,1)"); // check for '\r'
+                    let no_cr_label = self.new_label("rl_no_cr");
+                    self.emit(&format!("jne {}", no_cr_label));
+                    self.emit("movb $0, (%rcx,%rax,1)");
+                    self.emit_label(&no_cr_label);
+                    self.emit_label(&skip_cr_label);
+                    self.emit_label(&skip_label);
+                    self.emit("movq %rsp, %rax"); // return buffer pointer
+                    return;
+                }
+
+                // ── Built-in: read_file(path) ──────────────────
+                if name == "read_file" {
+                    // Calls __ferro_read_file helper (emitted at end of assembly)
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx");
+                    self.emit("call __ferro_read_file");
+                    // Returns: RAX = string ptr (or error msg), RDX = 0 (ok) or 1 (error)
+                    return;
+                }
+
+                // ── Built-in: write_file(path, content) ────────
+                if name == "write_file" {
+                    // Calls __ferro_write_file helper
+                    self.gen_expr(&args[0]);
+                    self.emit("pushq %rax");
+                    self.gen_expr(&args[1]);
+                    self.emit("movq %rax, %rdx"); // rdx = content
+                    self.emit("popq %rcx");       // rcx = path
+                    self.emit("call __ferro_write_file");
+                    // Returns: RDX = 0 (ok) or 1 (error), RAX = error msg if error
+                    return;
+                }
+
+                // ── Built-in: file_exists(path) ────────────────
+                if name == "file_exists" {
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx"); // path
+                    let mode_idx = self.string_literals.len();
+                    self.string_literals.push("r".to_string());
+                    self.emit(&format!("leaq .Lstr_{}(%rip), %rdx", mode_idx));
+                    self.emit("call fopen");
+                    self.emit("testq %rax, %rax");
+                    let exists_label = self.new_label("fe_yes");
+                    let done_label = self.new_label("fe_done");
+                    self.emit(&format!("jnz {}", exists_label));
+                    self.emit("xorl %eax, %eax"); // false
+                    self.emit(&format!("jmp {}", done_label));
+                    self.emit_label(&exists_label);
+                    // Close the file we opened
+                    self.emit("movq %rax, %rcx");
+                    self.emit("call fclose");
+                    self.emit("movq $1, %rax"); // true
+                    self.emit_label(&done_label);
+                    return;
+                }
+
+                // ── Built-in: eprint(s) ────────────────────────
+                if name == "eprint" {
+                    self.gen_expr(&args[0]);
+                    // fprintf(stderr, "%s\n", s)
+                    self.emit("movq %rax, %r8");  // r8 = string
+                    let fmt_idx = self.string_literals.len();
+                    self.string_literals.push("%s\\n".to_string());
+                    self.emit(&format!("leaq .Lstr_{}(%rip), %rdx", fmt_idx)); // format
+                    // Get stderr: __acrt_iob_func(2) on Windows
+                    self.emit("pushq %rdx");
+                    self.emit("pushq %r8");
+                    self.emit("movq $2, %rcx");
+                    self.emit("call __acrt_iob_func");
+                    self.emit("movq %rax, %rcx"); // rcx = stderr
+                    self.emit("popq %r8");
+                    self.emit("popq %rdx");
+                    self.emit("call fprintf");
+                    return;
+                }
+
+                // ── Built-in: exit(code) ───────────────────────
+                if name == "exit" {
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx");
+                    self.emit("call exit");
+                    return;
+                }
+
+                // ── Built-in: time() ───────────────────────────
+                if name == "time" {
+                    self.emit("xorl %ecx, %ecx"); // NULL arg
+                    self.emit("call time");
+                    return;
+                }
+
+                // ── Built-in: sleep(ms) ────────────────────────
+                if name == "sleep" {
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx");
+                    self.emit("call Sleep"); // Windows API
                     return;
                 }
 
