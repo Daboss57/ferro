@@ -52,8 +52,32 @@ fn compile(filename: &str) {
 
     println!("Compiling {} ({} bytes)...", filename, source.len());
 
-    // TODO Phase 2: Lex the source into tokens
-    // TODO Phase 3: Parse tokens into an AST
+    // Phase 2: Lex the source into tokens
+    let mut lexer = ferro::lexer::Lexer::new(&source);
+    let tokens = match lexer.tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            e.report(&source, filename);
+            process::exit(1);
+        }
+    };
+    println!("  Lexed {} tokens", tokens.len());
+
+    // Phase 3: Parse tokens into an AST
+    let mut parser = ferro::parser::Parser::new(tokens);
+    let program = match parser.parse_program() {
+        Ok(p) => p,
+        Err(e) => {
+            e.report(&source, filename);
+            process::exit(1);
+        }
+    };
+    println!("  Parsed {} function(s)", program.items.len());
+    println!();
+    println!("--- AST ---");
+    println!("{}", ferro::ast::pretty::pretty_print(&program));
+    println!("-----------");
+
     // TODO Phase 4: Semantic analysis (type checking, name resolution)
 
     // Phase 1: Emit hardcoded hello-world assembly as proof of concept

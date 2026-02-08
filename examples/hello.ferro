@@ -1,4 +1,16 @@
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
 fn main() {
-    let x: i64 = 42;
-    print(x);
+    let x: i64 = 1 + 2 * 3;
+    let mut i: i64 = 0;
+    while i < 10 {
+        i = i + 1;
+    }
+    if x == 7 {
+        add(x, i);
+    } else {
+        add(0, 0);
+    }
 }
