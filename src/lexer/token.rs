@@ -26,6 +26,7 @@ pub enum TokenKind {
     Minus,        // -
     Star,         // *
     Slash,        // /
+    Percent,      // %
     Equals,       // =
     EqualEqual,   // ==
     BangEqual,    // !=
@@ -44,6 +45,8 @@ pub enum TokenKind {
     RParen,    // )
     LBrace,    // {
     RBrace,    // }
+    LBracket,  // [
+    RBracket,  // ]
     Semicolon, // ;
     Colon,     // :
     Comma,     // ,

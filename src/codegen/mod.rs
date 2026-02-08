@@ -26,6 +26,14 @@ enum ValType {
     Void,
 }
 
+/// Metadata for a local variable on the stack.
+#[derive(Debug, Clone)]
+struct LocalVar {
+    offset: i64,
+    ty: ValType,
+    array_len: usize, // 0 = scalar, >0 = fixed-size array
+}
+
 /// Code generator state.
 pub struct Codegen {
     /// The output assembly string.
@@ -34,8 +42,8 @@ pub struct Codegen {
     label_counter: usize,
     /// String literals collected during codegen, emitted in .data section.
     string_literals: Vec<String>,
-    /// Maps variable name → (stack offset from RBP, type tag).
-    locals: HashMap<String, (i64, ValType)>,
+    /// Maps variable name → local variable metadata.
+    locals: HashMap<String, LocalVar>,
     /// Next available stack offset for a new local variable.
     stack_offset: i64,
     /// Maps function name → return type (for infer_type on Call exprs).
@@ -64,7 +72,7 @@ impl Codegen {
     fn alloc_local(&mut self, name: &str, ty: ValType) -> i64 {
         self.stack_offset -= 8;
         let offset = self.stack_offset;
-        self.locals.insert(name.to_string(), (offset, ty));
+        self.locals.insert(name.to_string(), LocalVar { offset, ty, array_len: 0 });
         offset
     }
 
@@ -89,14 +97,14 @@ impl Codegen {
             Expr::BoolLit { .. } => ValType::Bool,
             Expr::StringLit { .. } => ValType::Str,
             Expr::Ident { name, .. } => {
-                self.locals.get(name.as_str()).map(|l| l.1).unwrap_or(ValType::Int)
+                self.locals.get(name.as_str()).map(|l| l.ty).unwrap_or(ValType::Int)
             }
             Expr::UnaryOp { op, .. } => match op {
                 UnaryOp::Neg => ValType::Int,
                 UnaryOp::Not => ValType::Bool,
             },
             Expr::BinaryOp { op, .. } => match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => ValType::Int,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => ValType::Int,
                 _ => ValType::Bool,
             },
             Expr::Call { name, .. } => {
@@ -106,6 +114,15 @@ impl Codegen {
                     ValType::Int
                 } else {
                     self.func_return_types.get(name.as_str()).copied().unwrap_or(ValType::Int)
+                }
+            }
+            Expr::ArrayLit { .. } => ValType::Int, // array as a whole isn't a single value
+            Expr::Index { object, .. } => {
+                // Indexing returns the element type
+                if let Expr::Ident { name, .. } = object.as_ref() {
+                    self.locals.get(name.as_str()).map(|l| l.ty).unwrap_or(ValType::Int)
+                } else {
+                    ValType::Int
                 }
             }
         }
@@ -213,19 +230,50 @@ impl Codegen {
     fn gen_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Let { name, value, .. } => {
-                // Determine the type of the value (for print dispatch later)
-                let ty = self.infer_type(value);
-                // Evaluate the value → RAX
-                self.gen_expr(value);
-                // Allocate stack slot and store
-                let offset = self.alloc_local(name, ty);
-                self.emit(&format!("movq %rax, {}(%rbp)", offset));
+                // Special case: array literal — allocate N slots and init each
+                if let Expr::ArrayLit { elements, .. } = value {
+                    let count = elements.len();
+                    // Reserve count * 8 bytes on the stack
+                    self.stack_offset -= (count as i64) * 8;
+                    let base = self.stack_offset;
+                    self.locals.insert(name.to_string(), LocalVar {
+                        offset: base,
+                        ty: ValType::Int, // element type (all arrays are i64 for now)
+                        array_len: count,
+                    });
+                    // Initialize each element
+                    for (i, elem) in elements.iter().enumerate() {
+                        self.gen_expr(elem);
+                        let elem_offset = base + (i as i64) * 8;
+                        self.emit(&format!("movq %rax, {}(%rbp)", elem_offset));
+                    }
+                } else {
+                    // Normal scalar let
+                    let ty = self.infer_type(value);
+                    self.gen_expr(value);
+                    let offset = self.alloc_local(name, ty);
+                    self.emit(&format!("movq %rax, {}(%rbp)", offset));
+                }
             }
 
             Stmt::Assign { name, value, .. } => {
                 self.gen_expr(value);
-                let offset = self.locals[name].0;
+                let offset = self.locals[name].offset;
                 self.emit(&format!("movq %rax, {}(%rbp)", offset));
+            }
+
+            Stmt::IndexAssign { object, index, value, .. } => {
+                // Evaluate value → push
+                self.gen_expr(value);
+                self.emit("pushq %rax");
+                // Evaluate index → RAX
+                self.gen_expr(index);
+                self.emit("movq %rax, %rcx");   // RCX = index
+                // Pop value → RAX
+                self.emit("popq %rax");
+                // Store at base + index*8
+                let base = self.locals[object].offset;
+                self.emit(&format!("movq %rax, {}(%rbp,%rcx,8)", base));
             }
 
             Stmt::Return { value, .. } => {
@@ -318,7 +366,7 @@ impl Codegen {
             }
 
             Expr::Ident { name, span: _ } => {
-                let offset = self.locals[name].0;
+                let offset = self.locals[name].offset;
                 self.emit(&format!("movq {}(%rbp), %rax", offset));
             }
 
@@ -356,6 +404,12 @@ impl Codegen {
                         // idiv divides RDX:RAX by operand, quotient in RAX
                         self.emit("cqto");       // sign-extend RAX into RDX:RAX
                         self.emit("idivq %rcx");
+                    }
+                    BinOp::Mod => {
+                        // idiv: quotient in RAX, remainder in RDX
+                        self.emit("cqto");
+                        self.emit("idivq %rcx");
+                        self.emit("movq %rdx, %rax"); // result is remainder
                     }
                     // Comparisons: compare and set a byte, then zero-extend
                     BinOp::Eq => {
@@ -453,11 +507,19 @@ impl Codegen {
 
                 // ── Built-in: len ───────────────────────────────
                 if name == "len" {
-                    // len(s) → strlen(s), returns i64
+                    // Check if arg is an array (known size at compile time)
+                    if let Expr::Ident { name: arg_name, .. } = &args[0] {
+                        if let Some(local) = self.locals.get(arg_name.as_str()) {
+                            if local.array_len > 0 {
+                                self.emit(&format!("movq ${}, %rax", local.array_len));
+                                return;
+                            }
+                        }
+                    }
+                    // Otherwise, string: call strlen
                     self.gen_expr(&args[0]);
-                    self.emit("movq %rax, %rcx"); // string ptr → first arg
+                    self.emit("movq %rax, %rcx");
                     self.emit("call strlen");
-                    // result (length) is in RAX
                     return;
                 }
 
@@ -486,6 +548,20 @@ impl Codegen {
                 self.emit(&format!("call {}", name));
                 // Result is in RAX
             }
+
+            Expr::ArrayLit { .. } => {
+                // Array literals are handled in gen_stmt(Let) — not used standalone
+            }
+
+            Expr::Index { object, index, .. } => {
+                // Evaluate index → RAX
+                self.gen_expr(index);
+                // Load from base + index*8
+                if let Expr::Ident { name, .. } = object.as_ref() {
+                    let base = self.locals[name].offset;
+                    self.emit(&format!("movq {}(%rbp,%rax,8), %rax", base));
+                }
+            }
         }
     }
 }
@@ -499,7 +575,14 @@ fn count_locals_in_block(block: &Block) -> usize {
     let mut count = 0;
     for stmt in &block.stmts {
         match stmt {
-            Stmt::Let { .. } => count += 1,
+            Stmt::Let { value, .. } => {
+                // Arrays need N stack slots, scalars need 1
+                if let Expr::ArrayLit { elements, .. } = value {
+                    count += elements.len();
+                } else {
+                    count += 1;
+                }
+            }
             Stmt::If { then_block, else_block, .. } => {
                 count += count_locals_in_block(then_block);
                 if let Some(eb) = else_block {

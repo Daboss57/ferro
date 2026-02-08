@@ -67,6 +67,33 @@ impl Parser {
         }
     }
 
+    /// Parse a type name: `i64`, `str`, `bool`, or `[elem; N]` for arrays.
+    fn parse_type_name(&mut self) -> Result<(String, Span), CompileError> {
+        if *self.peek() == TokenKind::LBracket {
+            let start = self.span();
+            self.advance(); // eat [
+            let (elem, _) = self.expect_ident()?;
+            self.expect(&TokenKind::Semicolon)?;
+            let size = match self.peek().clone() {
+                TokenKind::Int(n) => {
+                    self.advance();
+                    n
+                }
+                _ => {
+                    return Err(CompileError::new(
+                        format!("expected array size, found {:?}", self.peek()),
+                        self.span(),
+                    ));
+                }
+            };
+            let end = self.span();
+            self.expect(&TokenKind::RBracket)?;
+            Ok((format!("[{}; {}]", elem, size), Span::new(start.start, end.end)))
+        } else {
+            self.expect_ident()
+        }
+    }
+
     // ── Program ─────────────────────────────────────────────
 
     /// Parse a full program: a list of function definitions.
@@ -97,7 +124,7 @@ impl Parser {
             let param_start = self.span();
             let (param_name, _) = self.expect_ident()?;
             self.expect(&TokenKind::Colon)?;
-            let (type_name, _) = self.expect_ident()?;
+            let (type_name, _) = self.parse_type_name()?;
             params.push(Param {
                 name: param_name,
                 type_name,
@@ -109,7 +136,7 @@ impl Parser {
         // Optional return type: `-> type`
         let return_type = if *self.peek() == TokenKind::Arrow {
             self.advance();
-            let (type_name, _) = self.expect_ident()?;
+            let (type_name, _) = self.parse_type_name()?;
             Some(type_name)
         } else {
             None
@@ -178,7 +205,7 @@ impl Parser {
         // Optional type annotation: `: type`
         let type_name = if *self.peek() == TokenKind::Colon {
             self.advance();
-            let (t, _) = self.expect_ident()?;
+            let (t, _) = self.parse_type_name()?;
             Some(t)
         } else {
             None
@@ -260,7 +287,7 @@ impl Parser {
         let start = self.span();
         let expr = self.parse_expr()?;
 
-        // Check if this is an assignment: `name = expr;`
+        // Check if this is an assignment: `name = expr;` or `name[i] = expr;`
         if *self.peek() == TokenKind::Equals {
             self.advance();
             if let Expr::Ident { name, .. } = expr {
@@ -271,6 +298,22 @@ impl Parser {
                     value,
                     span: Span::new(start.start, self.span().start),
                 });
+            } else if let Expr::Index { object, index, .. } = expr {
+                if let Expr::Ident { name, .. } = *object {
+                    let value = self.parse_expr()?;
+                    self.expect(&TokenKind::Semicolon)?;
+                    return Ok(Stmt::IndexAssign {
+                        object: name,
+                        index: *index,
+                        value,
+                        span: Span::new(start.start, self.span().start),
+                    });
+                } else {
+                    return Err(CompileError::new(
+                        "invalid index assignment target",
+                        Span::new(start.start, self.span().start),
+                    ));
+                }
             } else {
                 return Err(CompileError::new(
                     "invalid assignment target",
@@ -319,6 +362,21 @@ impl Parser {
         // Now handle binary operators: keep going as long as the next operator
         // binds tighter than our minimum.
         loop {
+            // Postfix: indexing `expr[index]`
+            if *self.peek() == TokenKind::LBracket {
+                let start_span = lhs.span();
+                self.advance(); // eat [
+                let index = self.parse_expr()?;
+                let end = self.span();
+                self.expect(&TokenKind::RBracket)?;
+                lhs = Expr::Index {
+                    object: Box::new(lhs),
+                    index: Box::new(index),
+                    span: Span::new(start_span.start, end.end),
+                };
+                continue;
+            }
+
             // Special case: pipe operator |>
             // Desugars: `a |> f` → `f(a)`, `a |> f(b, c)` → `f(a, b, c)`
             if *self.peek() == TokenKind::PipeArrow {
@@ -373,6 +431,7 @@ impl Parser {
                 TokenKind::Minus      => (BinOp::Sub, 5),
                 TokenKind::Star       => (BinOp::Mul, 6),
                 TokenKind::Slash      => (BinOp::Div, 6),
+                TokenKind::Percent    => (BinOp::Mod, 6),
                 _ => break, // not a binary operator — stop
             };
 
@@ -477,6 +536,24 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 Ok(expr)
             }
+            // Array literal: `[expr, expr, ...]`
+            TokenKind::LBracket => {
+                let start = self.span();
+                self.advance(); // consume '['
+                let mut elements = Vec::new();
+                while *self.peek() != TokenKind::RBracket {
+                    if !elements.is_empty() {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                    elements.push(self.parse_expr()?);
+                }
+                let end = self.span();
+                self.expect(&TokenKind::RBracket)?;
+                Ok(Expr::ArrayLit {
+                    elements,
+                    span: Span::new(start.start, end.end),
+                })
+            }
             _ => Err(CompileError::new(
                 format!("expected expression, found {:?}", self.peek()),
                 self.span(),
@@ -495,7 +572,9 @@ impl Expr {
             | Expr::Ident { span, .. }
             | Expr::BinaryOp { span, .. }
             | Expr::UnaryOp { span, .. }
-            | Expr::Call { span, .. } => *span,
+            | Expr::Call { span, .. }
+            | Expr::ArrayLit { span, .. }
+            | Expr::Index { span, .. } => *span,
         }
     }
 }

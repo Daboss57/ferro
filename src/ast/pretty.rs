@@ -64,6 +64,14 @@ fn print_stmt(out: &mut String, stmt: &Stmt, level: usize) {
             print_expr(out, value);
             out.push_str(";\n");
         }
+        Stmt::IndexAssign { object, index, value, .. } => {
+            out.push_str(object);
+            out.push('[');
+            print_expr(out, index);
+            out.push_str("] = ");
+            print_expr(out, value);
+            out.push_str(";\n");
+        }
         Stmt::Return { value, .. } => {
             out.push_str("return");
             if let Some(v) = value {
@@ -120,6 +128,7 @@ fn print_expr(out: &mut String, expr: &Expr) {
                 BinOp::Sub => " - ",
                 BinOp::Mul => " * ",
                 BinOp::Div => " / ",
+                BinOp::Mod => " % ",
                 BinOp::Eq  => " == ",
                 BinOp::Neq => " != ",
                 BinOp::Lt  => " < ",
@@ -151,6 +160,22 @@ fn print_expr(out: &mut String, expr: &Expr) {
                 print_expr(out, arg);
             }
             out.push(')');
+        }
+        Expr::ArrayLit { elements, .. } => {
+            out.push('[');
+            for (i, elem) in elements.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                print_expr(out, elem);
+            }
+            out.push(']');
+        }
+        Expr::Index { object, index, .. } => {
+            print_expr(out, object);
+            out.push('[');
+            print_expr(out, index);
+            out.push(']');
         }
     }
 }

@@ -238,10 +238,13 @@ impl Lexer {
         let kind = match ch {
             '+' => TokenKind::Plus,
             '*' => TokenKind::Star,
+            '%' => TokenKind::Percent,
             '(' => TokenKind::LParen,
             ')' => TokenKind::RParen,
             '{' => TokenKind::LBrace,
             '}' => TokenKind::RBrace,
+            '[' => TokenKind::LBracket,
+            ']' => TokenKind::RBracket,
             ';' => TokenKind::Semicolon,
             ':' => TokenKind::Colon,
             ',' => TokenKind::Comma,

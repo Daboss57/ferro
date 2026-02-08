@@ -52,6 +52,13 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    /// `arr[index] = expr;`
+    IndexAssign {
+        object: String,
+        index: Expr,
+        value: Expr,
+        span: Span,
+    },
     /// `return expr;`
     Return {
         value: Option<Expr>,
@@ -125,6 +132,17 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    /// Array literal: `[1, 2, 3]`
+    ArrayLit {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    /// Index expression: `arr[i]`
+    Index {
+        object: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
 }
 
 /// Binary operators.
@@ -134,6 +152,7 @@ pub enum BinOp {
     Sub,        // -
     Mul,        // *
     Div,        // /
+    Mod,        // %
     Eq,         // ==
     Neq,        // !=
     Lt,         // <

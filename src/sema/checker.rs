@@ -75,6 +75,20 @@ impl Checker {
     // ── Resolve a type name ─────────────────────────────
 
     fn resolve_type(&self, name: &str, span: Span) -> Result<Type, CompileError> {
+        // Handle array types: "[elem; N]"
+        if name.starts_with('[') && name.ends_with(']') {
+            let inner = &name[1..name.len() - 1];
+            let parts: Vec<&str> = inner.split(';').collect();
+            if parts.len() != 2 {
+                return Err(CompileError::new(format!("invalid array type '{}'", name), span));
+            }
+            let elem_name = parts[0].trim();
+            let size: usize = parts[1].trim().parse().map_err(|_| {
+                CompileError::new(format!("invalid array size in '{}'", name), span)
+            })?;
+            let elem_type = self.resolve_type(elem_name, span)?;
+            return Ok(Type::Array(Box::new(elem_type), size));
+        }
         Type::from_name(name).ok_or_else(|| {
             CompileError::new(format!("unknown type '{}'", name), span)
         })
@@ -208,6 +222,49 @@ impl Checker {
                 Ok(())
             }
 
+            Stmt::IndexAssign { object, index, value, span } => {
+                // Look up the array variable
+                let arr_ty = match self.lookup_var(object) {
+                    Some(info) => info.ty.clone(),
+                    None => {
+                        return Err(CompileError::new(
+                            format!("undeclared variable '{}'", object),
+                            *span,
+                        ));
+                    }
+                };
+                // Must be an array
+                let elem_ty = match &arr_ty {
+                    Type::Array(elem, _) => elem.as_ref().clone(),
+                    _ => {
+                        return Err(CompileError::new(
+                            format!("cannot index into non-array type '{}'", arr_ty),
+                            *span,
+                        ));
+                    }
+                };
+                // Index must be i64
+                let idx_ty = self.check_expr(index)?;
+                if idx_ty != Type::I64 {
+                    return Err(CompileError::new(
+                        format!("array index must be 'i64', got '{}'", idx_ty),
+                        *span,
+                    ));
+                }
+                // Value must match element type
+                let val_ty = self.check_expr(value)?;
+                if val_ty != elem_ty {
+                    return Err(CompileError::new(
+                        format!(
+                            "type mismatch in index assignment: expected '{}', got '{}'",
+                            elem_ty, val_ty
+                        ),
+                        *span,
+                    ));
+                }
+                Ok(())
+            }
+
             Stmt::Return { value, span } => {
                 let return_ty = match value {
                     Some(expr) => self.check_expr(expr)?,
@@ -322,7 +379,7 @@ impl Checker {
 
                 match op {
                     // Arithmetic: i64 op i64 -> i64
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                         if left_ty != Type::I64 || right_ty != Type::I64 {
                             return Err(CompileError::new(
                                 format!(
@@ -389,6 +446,26 @@ impl Checker {
                     return Ok(Type::Void);
                 }
 
+                // Special handling for len — accepts str or array
+                if name == "len" {
+                    if args.len() != 1 {
+                        return Err(CompileError::new(
+                            format!("len() takes 1 argument, got {}", args.len()),
+                            *span,
+                        ));
+                    }
+                    let arg_ty = self.check_expr(&args[0])?;
+                    match &arg_ty {
+                        Type::Str | Type::Array(_, _) => return Ok(Type::I64),
+                        _ => {
+                            return Err(CompileError::new(
+                                format!("len() expects 'str' or array, got '{}'", arg_ty),
+                                *span,
+                            ));
+                        }
+                    }
+                }
+
                 let func_info = match self.functions.get(name) {
                     Some(info) => info.clone(),
                     None => {
@@ -427,6 +504,50 @@ impl Checker {
                 }
 
                 Ok(func_info.return_type.clone())
+            }
+
+            Expr::ArrayLit { elements, span } => {
+                if elements.is_empty() {
+                    return Err(CompileError::new(
+                        "empty array literals are not allowed",
+                        *span,
+                    ));
+                }
+                let first_ty = self.check_expr(&elements[0])?;
+                for (i, elem) in elements.iter().enumerate().skip(1) {
+                    let elem_ty = self.check_expr(elem)?;
+                    if elem_ty != first_ty {
+                        return Err(CompileError::new(
+                            format!(
+                                "array element {} has type '{}', expected '{}'",
+                                i, elem_ty, first_ty
+                            ),
+                            *span,
+                        ));
+                    }
+                }
+                Ok(Type::Array(Box::new(first_ty), elements.len()))
+            }
+
+            Expr::Index { object, index, span } => {
+                let obj_ty = self.check_expr(object)?;
+                let elem_ty = match &obj_ty {
+                    Type::Array(elem, _) => elem.as_ref().clone(),
+                    _ => {
+                        return Err(CompileError::new(
+                            format!("cannot index into non-array type '{}'", obj_ty),
+                            *span,
+                        ));
+                    }
+                };
+                let idx_ty = self.check_expr(index)?;
+                if idx_ty != Type::I64 {
+                    return Err(CompileError::new(
+                        format!("array index must be 'i64', got '{}'", idx_ty),
+                        *span,
+                    ));
+                }
+                Ok(elem_ty)
             }
         }
     }

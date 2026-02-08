@@ -445,3 +445,128 @@ fn test_e2e_mixed_prints() {
         "42\nhello\ntrue"
     );
 }
+
+// ── Arrays & Modulo (Phase 8) ──────────────────────────
+
+#[test]
+fn test_e2e_modulo() {
+    assert_eq!(compile_and_run("fn main() { print(17 % 5); }"), "2");
+}
+
+#[test]
+fn test_e2e_modulo_even_odd() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                if 4 % 2 == 0 { print(1); } else { print(0); }
+            }"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn test_e2e_array_literal_and_index() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let arr: [i64; 3] = [10, 20, 30];
+                print(arr[0]);
+                print(arr[1]);
+                print(arr[2]);
+            }"
+        ),
+        "10\n20\n30"
+    );
+}
+
+#[test]
+fn test_e2e_array_index_assign() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let arr: [i64; 3] = [1, 2, 3];
+                arr[1] = 99;
+                print(arr[1]);
+            }"
+        ),
+        "99"
+    );
+}
+
+#[test]
+fn test_e2e_array_computed_index() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let arr: [i64; 3] = [10, 20, 30];
+                let i: i64 = 2;
+                print(arr[i]);
+            }"
+        ),
+        "30"
+    );
+}
+
+#[test]
+fn test_e2e_array_len() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let arr: [i64; 4] = [5, 10, 15, 20];
+                print(len(arr));
+            }"
+        ),
+        "4"
+    );
+}
+
+#[test]
+fn test_e2e_array_loop_sum() {
+    // Sum [10, 20, 30] = 60
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let arr: [i64; 3] = [10, 20, 30];
+                let mut sum: i64 = 0;
+                let mut i: i64 = 0;
+                while i < len(arr) {
+                    sum = sum + arr[i];
+                    i = i + 1;
+                }
+                print(sum);
+            }"
+        ),
+        "60"
+    );
+}
+
+#[test]
+fn test_e2e_array_with_expressions() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let x: i64 = 5;
+                let arr: [i64; 3] = [x, x * 2, x * 3];
+                print(arr[0]);
+                print(arr[1]);
+                print(arr[2]);
+            }"
+        ),
+        "5\n10\n15"
+    );
+}
+
+#[test]
+fn test_e2e_array_type_inferred() {
+    // Array without explicit type annotation
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let arr = [100, 200, 300];
+                print(arr[1]);
+            }"
+        ),
+        "200"
+    );
+}

@@ -7,6 +7,7 @@ pub enum Type {
     Bool,
     Str,
     Void,
+    Array(Box<Type>, usize),
 }
 
 impl Type {
@@ -28,6 +29,7 @@ impl std::fmt::Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::Str  => write!(f, "str"),
             Type::Void => write!(f, "void"),
+            Type::Array(elem, size) => write!(f, "[{}; {}]", elem, size),
         }
     }
 }

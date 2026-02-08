@@ -350,7 +350,7 @@ fn test_len_valid() {
 fn test_len_wrong_type() {
     check_err(
         "fn main() { len(42); }",
-        "expected 'str', got 'i64'",
+        "expects 'str' or array",
     );
 }
 
@@ -358,6 +358,81 @@ fn test_len_wrong_type() {
 fn test_len_wrong_arg_count() {
     check_err(
         r#"fn main() { len("a", "b"); }"#,
-        "takes 1 argument(s), got 2",
+        "len() takes 1 argument, got 2",
+    );
+}
+
+// ── Arrays & Modulo (Phase 8) ──────────────────────────
+
+#[test]
+fn test_array_literal_valid() {
+    check_ok("fn main() { let arr: [i64; 3] = [1, 2, 3]; print(arr[0]); }");
+}
+
+#[test]
+fn test_array_index_valid() {
+    check_ok("fn main() { let arr = [10, 20]; print(arr[0]); }");
+}
+
+#[test]
+fn test_array_index_assign_valid() {
+    check_ok("fn main() { let arr = [1, 2, 3]; arr[0] = 99; }");
+}
+
+#[test]
+fn test_array_mixed_types_error() {
+    check_err(
+        "fn main() { let arr = [1, true]; }",
+        "array element 1 has type 'bool', expected 'i64'",
+    );
+}
+
+#[test]
+fn test_array_index_non_array_error() {
+    check_err(
+        "fn main() { let x: i64 = 5; print(x[0]); }",
+        "cannot index into non-array",
+    );
+}
+
+#[test]
+fn test_array_index_not_int_error() {
+    check_err(
+        "fn main() { let arr = [1, 2]; print(arr[true]); }",
+        "array index must be 'i64'",
+    );
+}
+
+#[test]
+fn test_array_index_assign_type_mismatch() {
+    check_err(
+        "fn main() { let arr = [1, 2]; arr[0] = true; }",
+        "type mismatch in index assignment",
+    );
+}
+
+#[test]
+fn test_empty_array_error() {
+    check_err(
+        "fn main() { let arr = []; }",
+        "empty array literals are not allowed",
+    );
+}
+
+#[test]
+fn test_len_array_valid() {
+    check_ok("fn main() { let arr = [1, 2, 3]; print(len(arr)); }");
+}
+
+#[test]
+fn test_modulo_valid() {
+    check_ok("fn main() { print(10 % 3); }");
+}
+
+#[test]
+fn test_modulo_type_error() {
+    check_err(
+        "fn main() { print(true % false); }",
+        "cannot apply",
     );
 }

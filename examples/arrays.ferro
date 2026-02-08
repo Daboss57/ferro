@@ -1,0 +1,31 @@
+// Phase 8: Arrays & Modulo demo
+
+fn main() {
+    // Array literal
+    let arr: [i64; 5] = [10, 20, 30, 40, 50];
+
+    // Array indexing
+    print(arr[0]);
+    print(arr[2]);
+    print(arr[4]);
+
+    // Index assignment
+    arr[1] = 99;
+    print(arr[1]);
+
+    // Modulo operator
+    print(17 % 5);
+    print(100 % 7);
+
+    // len() on arrays
+    print(len(arr));
+
+    // Use arrays in loops
+    let mut sum: i64 = 0;
+    let mut i: i64 = 0;
+    while i < len(arr) {
+        sum = sum + arr[i];
+        i = i + 1;
+    }
+    print(sum);
+}
