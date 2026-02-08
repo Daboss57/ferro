@@ -37,6 +37,7 @@ pub enum TokenKind {
     AmpAmp,       // &&
     PipePipe,     // ||
     Arrow,        // ->
+    PipeArrow,    // |>
 
     // Punctuation
     LParen,    // (

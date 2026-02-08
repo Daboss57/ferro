@@ -254,7 +254,8 @@ impl Parser {
         })
     }
 
-    /// Parse an expression-statement or assignment: `expr;` or `name = expr;`
+    /// Parse an expression-statement, assignment, or tail expression.
+    /// `expr;` = statement, `name = expr;` = assignment, `expr` (no `;`, before `}`) = tail/implicit return
     fn parse_expr_or_assign_stmt(&mut self) -> Result<Stmt, CompileError> {
         let start = self.span();
         let expr = self.parse_expr()?;
@@ -278,6 +279,14 @@ impl Parser {
             }
         }
 
+        // If next token is `}` (end of block) and no semicolon → tail expression (implicit return)
+        if *self.peek() == TokenKind::RBrace {
+            return Ok(Stmt::TailExpr {
+                expr,
+                span: Span::new(start.start, self.span().start),
+            });
+        }
+
         self.expect(&TokenKind::Semicolon)?;
         Ok(Stmt::Expr {
             expr,
@@ -289,6 +298,7 @@ impl Parser {
     //
     // Pratt parsing uses "binding power" to handle precedence.
     // Higher binding power = binds tighter.
+    //   |>           → 0 (pipe, lowest — handled specially)
     //   ||           → 1
     //   &&           → 2
     //   == !=        → 3
@@ -309,6 +319,47 @@ impl Parser {
         // Now handle binary operators: keep going as long as the next operator
         // binds tighter than our minimum.
         loop {
+            // Special case: pipe operator |>
+            // Desugars: `a |> f` → `f(a)`, `a |> f(b, c)` → `f(a, b, c)`
+            if *self.peek() == TokenKind::PipeArrow {
+                let pipe_bp: u8 = 1; // lowest precedence
+                if pipe_bp <= min_bp {
+                    break;
+                }
+                self.advance(); // consume |>
+
+                let start_span = lhs.span();
+                // The right side must be a function call or identifier
+                let rhs = self.parse_prefix()?;
+
+                lhs = match rhs {
+                    // `a |> f(b, c)` → `f(a, b, c)` — prepend lhs as first arg
+                    Expr::Call { name, mut args, span } => {
+                        args.insert(0, lhs);
+                        Expr::Call {
+                            name,
+                            args,
+                            span: Span::new(start_span.start, span.end),
+                        }
+                    }
+                    // `a |> f` → `f(a)` — bare identifier becomes a call
+                    Expr::Ident { name, span } => {
+                        Expr::Call {
+                            name,
+                            args: vec![lhs],
+                            span: Span::new(start_span.start, span.end),
+                        }
+                    }
+                    _ => {
+                        return Err(CompileError::new(
+                            "right side of |> must be a function name or call",
+                            self.span(),
+                        ));
+                    }
+                };
+                continue;
+            }
+
             let (op, bp) = match self.peek() {
                 TokenKind::PipePipe   => (BinOp::Or,  1),
                 TokenKind::AmpAmp    => (BinOp::And, 2),

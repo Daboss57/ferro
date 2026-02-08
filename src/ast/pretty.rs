@@ -76,6 +76,10 @@ fn print_stmt(out: &mut String, stmt: &Stmt, level: usize) {
             print_expr(out, expr);
             out.push_str(";\n");
         }
+        Stmt::TailExpr { expr, .. } => {
+            print_expr(out, expr);
+            out.push('\n');
+        }
         Stmt::If { condition, then_block, else_block, .. } => {
             out.push_str("if ");
             print_expr(out, condition);

@@ -1,0 +1,19 @@
+fn double(x: i64) -> i64 {
+    x + x
+}
+
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+fn main() {
+    // Implicit return: no "return" keyword needed!
+    let result: i64 = double(21);
+    print(result);
+
+    // Pipe operator: reads left-to-right
+    5 |> double |> print;
+
+    // Pipe into function with extra args
+    3 |> add(4) |> double |> print;
+}

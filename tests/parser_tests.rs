@@ -287,6 +287,60 @@ fn main() {
     assert!(output.contains("add(0, 0)"));
 }
 
+// ── Implicit return ─────────────────────────────────────
+
+#[test]
+fn test_implicit_return_parsed_as_tail_expr() {
+    let prog = parse("fn add(a: i64, b: i64) -> i64 { a + b }");
+    // The last expression without `;` should be a TailExpr
+    if let Stmt::TailExpr { .. } = &prog.items[0].body.stmts[0] {
+        // good
+    } else {
+        panic!("expected TailExpr, got {:?}", prog.items[0].body.stmts[0]);
+    }
+}
+
+#[test]
+fn test_implicit_return_pretty_print() {
+    let output = parse_and_print("fn add(a: i64, b: i64) -> i64 { a + b }");
+    // TailExpr should be printed without semicolon
+    assert!(output.contains("(a + b)\n"));
+    assert!(!output.contains("(a + b);"));
+}
+
+// ── Pipe operator ───────────────────────────────────────
+
+#[test]
+fn test_pipe_desugars_to_call() {
+    // `x |> f` should desugar to `f(x)`
+    let prog = parse("fn main() { x |> f; }");
+    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.items[0].body.stmts[0] {
+        assert_eq!(name, "f");
+        assert_eq!(args.len(), 1);
+    } else {
+        panic!("expected Call from pipe");
+    }
+}
+
+#[test]
+fn test_pipe_with_args_desugars() {
+    // `x |> f(y)` should desugar to `f(x, y)`
+    let prog = parse("fn main() { x |> f(y); }");
+    if let Stmt::Expr { expr: Expr::Call { name, args, .. }, .. } = &prog.items[0].body.stmts[0] {
+        assert_eq!(name, "f");
+        assert_eq!(args.len(), 2); // x and y
+    } else {
+        panic!("expected Call with 2 args from pipe");
+    }
+}
+
+#[test]
+fn test_pipe_chain_desugars() {
+    // `x |> f |> g` should desugar to `g(f(x))`
+    let output = parse_and_print("fn main() { x |> f |> g; }");
+    assert!(output.contains("g(f(x))"));
+}
+
 // ── Error cases ─────────────────────────────────────────
 
 #[test]

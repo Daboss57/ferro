@@ -62,6 +62,12 @@ pub enum Stmt {
         expr: Expr,
         span: Span,
     },
+    /// Implicit return: last expression in a block without semicolon.
+    /// `fn add(a: i64, b: i64) -> i64 { a + b }`
+    TailExpr {
+        expr: Expr,
+        span: Span,
+    },
     /// `if condition { ... } else { ... }`
     If {
         condition: Expr,

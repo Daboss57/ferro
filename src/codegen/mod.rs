@@ -180,6 +180,15 @@ impl Codegen {
                 // Result in RAX is discarded
             }
 
+            Stmt::TailExpr { expr, .. } => {
+                // Implicit return: evaluate expression, result stays in RAX
+                // Then jump to function epilogue
+                self.gen_expr(expr);
+                self.emit("movq %rbp, %rsp");
+                self.emit("popq %rbp");
+                self.emit("ret");
+            }
+
             Stmt::If { condition, then_block, else_block, .. } => {
                 let else_label = self.new_label("else");
                 let end_label = self.new_label("endif");

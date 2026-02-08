@@ -304,10 +304,13 @@ impl Lexer {
                 if self.peek() == Some('|') {
                     self.advance();
                     TokenKind::PipePipe   // ||
+                } else if self.peek() == Some('>') {
+                    self.advance();
+                    TokenKind::PipeArrow  // |>
                 } else {
                     let end = self.current_pos();
                     return Err(CompileError::new(
-                        "unexpected character '|' (did you mean '||'?)",
+                        "unexpected character '|' (did you mean '||' or '|>'?)",
                         Span::new(start, end),
                     ));
                 }

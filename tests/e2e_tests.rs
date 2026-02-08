@@ -239,3 +239,81 @@ fn test_e2e_multiple_prints() {
         "1\n2\n3"
     );
 }
+
+// ── Implicit return ─────────────────────────────────────
+
+#[test]
+fn test_e2e_implicit_return() {
+    assert_eq!(
+        compile_and_run(
+            "fn double(x: i64) -> i64 { x + x }
+             fn main() { print(double(21)); }"
+        ),
+        "42"
+    );
+}
+
+#[test]
+fn test_e2e_implicit_return_with_other_stmts() {
+    assert_eq!(
+        compile_and_run(
+            "fn compute(x: i64) -> i64 {
+                let y: i64 = x * 2;
+                y + 1
+             }
+             fn main() { print(compute(20)); }"
+        ),
+        "41"
+    );
+}
+
+// ── Pipe operator |> ────────────────────────────────────
+
+#[test]
+fn test_e2e_pipe_simple() {
+    // 5 |> double → double(5) = 10
+    assert_eq!(
+        compile_and_run(
+            "fn double(x: i64) -> i64 { x + x }
+             fn main() { 5 |> double |> print; }"
+        ),
+        "10"
+    );
+}
+
+#[test]
+fn test_e2e_pipe_with_args() {
+    // 3 |> add(4) → add(3, 4) = 7
+    assert_eq!(
+        compile_and_run(
+            "fn add(a: i64, b: i64) -> i64 { a + b }
+             fn main() { 3 |> add(4) |> print; }"
+        ),
+        "7"
+    );
+}
+
+#[test]
+fn test_e2e_pipe_chain() {
+    // 5 |> double |> add(1) |> double → double(add(double(5), 1)) = double(11) = 22
+    assert_eq!(
+        compile_and_run(
+            "fn double(x: i64) -> i64 { x + x }
+             fn add(a: i64, b: i64) -> i64 { a + b }
+             fn main() { 5 |> double |> add(1) |> double |> print; }"
+        ),
+        "22"
+    );
+}
+
+#[test]
+fn test_e2e_implicit_return_and_pipe() {
+    // Combine both features
+    assert_eq!(
+        compile_and_run(
+            "fn triple(x: i64) -> i64 { x * 3 }
+             fn main() { 7 |> triple |> print; }"
+        ),
+        "21"
+    );
+}

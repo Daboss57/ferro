@@ -221,6 +221,21 @@ impl Checker {
                 Ok(())
             }
 
+            Stmt::TailExpr { expr, span } => {
+                // Tail expression acts as implicit return
+                let return_ty = self.check_expr(expr)?;
+                if return_ty != self.current_return_type {
+                    return Err(CompileError::new(
+                        format!(
+                            "implicit return type mismatch: function returns '{}' but tail expression has type '{}'",
+                            self.current_return_type, return_ty
+                        ),
+                        *span,
+                    ));
+                }
+                Ok(())
+            }
+
             Stmt::If { condition, then_block, else_block, span } => {
                 let cond_ty = self.check_expr(condition)?;
                 if cond_ty != Type::Bool {

@@ -130,6 +130,29 @@ fn test_arrow() {
 }
 
 #[test]
+fn test_pipe_arrow() {
+    assert_eq!(
+        lex("|>"),
+        vec![TokenKind::PipeArrow, TokenKind::Eof]
+    );
+}
+
+#[test]
+fn test_pipe_arrow_in_chain() {
+    assert_eq!(
+        lex("x |> f |> g"),
+        vec![
+            TokenKind::Ident("x".into()),
+            TokenKind::PipeArrow,
+            TokenKind::Ident("f".into()),
+            TokenKind::PipeArrow,
+            TokenKind::Ident("g".into()),
+            TokenKind::Eof,
+        ]
+    );
+}
+
+#[test]
 fn test_punctuation() {
     assert_eq!(
         lex("( ) { } ; : ,"),
