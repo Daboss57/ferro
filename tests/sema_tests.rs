@@ -369,6 +369,97 @@ fn test_array_literal_valid() {
     check_ok("fn main() { let arr: [i64; 3] = [1, 2, 3]; print(arr[0]); }");
 }
 
+// ── For, Break, Continue, Match (Phase 10) ────────────
+
+#[test]
+fn test_for_valid() {
+    check_ok("fn main() { for i in 0..10 { print(i); } }");
+}
+
+#[test]
+fn test_for_variable_bounds() {
+    check_ok("fn main() { let n: i64 = 5; for i in 0..n { print(i); } }");
+}
+
+#[test]
+fn test_for_range_bool_error() {
+    check_err(
+        "fn main() { for i in true..5 { print(i); } }",
+        "i64",
+    );
+}
+
+#[test]
+fn test_break_in_while() {
+    check_ok("fn main() { while true { break; } }");
+}
+
+#[test]
+fn test_break_outside_loop() {
+    check_err(
+        "fn main() { break; }",
+        "outside of loop",
+    );
+}
+
+#[test]
+fn test_continue_outside_loop() {
+    check_err(
+        "fn main() { continue; }",
+        "outside of loop",
+    );
+}
+
+#[test]
+fn test_break_in_for() {
+    check_ok("fn main() { for i in 0..10 { break; } }");
+}
+
+#[test]
+fn test_continue_in_for() {
+    check_ok("fn main() { for i in 0..10 { continue; } }");
+}
+
+#[test]
+fn test_match_int_valid() {
+    check_ok(
+        "fn main() {
+            let x: i64 = 1;
+            match x {
+                1 => { print(1); }
+                _ => { print(0); }
+            }
+        }"
+    );
+}
+
+#[test]
+fn test_match_bool_valid() {
+    check_ok(
+        "fn main() {
+            let x: bool = true;
+            match x {
+                true => { print(1); }
+                false => { print(0); }
+            }
+        }"
+    );
+}
+
+#[test]
+fn test_match_pattern_type_mismatch() {
+    check_err(
+        "fn main() {
+            let x: bool = true;
+            match x {
+                1 => { print(1); }
+                _ => { print(0); }
+            }
+        }",
+        "integer pattern in match",
+    );
+}
+
 #[test]
 fn test_array_index_valid() {
     check_ok("fn main() { let arr = [10, 20]; print(arr[0]); }");

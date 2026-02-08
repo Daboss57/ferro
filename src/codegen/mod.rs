@@ -48,6 +48,8 @@ pub struct Codegen {
     stack_offset: i64,
     /// Maps function name → return type (for infer_type on Call exprs).
     func_return_types: HashMap<String, ValType>,
+    /// Stack of (continue_label, break_label) for nested loops.
+    loop_labels: Vec<(String, String)>,
 }
 
 impl Codegen {
@@ -59,6 +61,7 @@ impl Codegen {
             locals: HashMap::new(),
             stack_offset: 0,
             func_return_types: HashMap::new(),
+            loop_labels: Vec::new(),
         }
     }
 
@@ -329,6 +332,9 @@ impl Codegen {
                 let loop_label = self.new_label("while");
                 let end_label = self.new_label("endwhile");
 
+                // Push loop labels for break/continue
+                self.loop_labels.push((loop_label.clone(), end_label.clone()));
+
                 // Loop start
                 self.emit_label(&loop_label);
 
@@ -341,6 +347,97 @@ impl Codegen {
                 self.gen_block(body);
                 self.emit(&format!("jmp {}", loop_label)); // loop back
 
+                self.emit_label(&end_label);
+                self.loop_labels.pop();
+            }
+
+            Stmt::For { var, start, end, body, .. } => {
+                // Initialize loop variable
+                self.gen_expr(start);
+                let offset = self.alloc_local(var, ValType::Int);
+                self.emit(&format!("movq %rax, {}(%rbp)", offset));
+
+                // Evaluate end once
+                self.gen_expr(end);
+                let end_offset = self.alloc_local("__for_end", ValType::Int);
+                self.emit(&format!("movq %rax, {}(%rbp)", end_offset));
+
+                let loop_label = self.new_label("for");
+                let cont_label = self.new_label("forcont");
+                let end_label = self.new_label("endfor");
+                // continue → increment (cont_label), break → end_label
+                self.loop_labels.push((cont_label.clone(), end_label.clone()));
+
+                // Loop start: check var < end
+                self.emit_label(&loop_label);
+                self.emit(&format!("movq {}(%rbp), %rax", offset));
+                self.emit(&format!("cmpq {}(%rbp), %rax", end_offset));
+                self.emit(&format!("jge {}", end_label));
+
+                // Body
+                self.gen_block(body);
+
+                // Increment: var = var + 1 (continue target)
+                self.emit_label(&cont_label);
+                self.emit(&format!("movq {}(%rbp), %rax", offset));
+                self.emit("addq $1, %rax");
+                self.emit(&format!("movq %rax, {}(%rbp)", offset));
+                self.emit(&format!("jmp {}", loop_label));
+
+                self.emit_label(&end_label);
+                self.loop_labels.pop();
+            }
+
+            Stmt::Break { .. } => {
+                if let Some((_, end_label)) = self.loop_labels.last() {
+                    self.emit(&format!("jmp {}", end_label.clone()));
+                }
+            }
+
+            Stmt::Continue { .. } => {
+                if let Some((start_label, _)) = self.loop_labels.last() {
+                    self.emit(&format!("jmp {}", start_label.clone()));
+                }
+            }
+
+            Stmt::Match { subject, arms, .. } => {
+                // Evaluate subject once → push on stack
+                self.gen_expr(subject);
+                self.emit("pushq %rax");
+
+                let end_label = self.new_label("matchend");
+
+                for arm in arms.iter() {
+                    match &arm.pattern {
+                        Pattern::IntLit(v, _) => {
+                            let skip = self.new_label("skip");
+                            self.emit(&format!("cmpq ${}, (%rsp)", v));
+                            self.emit(&format!("jne {}", skip));
+                            self.emit("addq $8, %rsp"); // pop subject
+                            self.gen_block(&arm.body);
+                            self.emit(&format!("jmp {}", end_label));
+                            self.emit_label(&skip);
+                        }
+                        Pattern::BoolLit(v, _) => {
+                            let skip = self.new_label("skip");
+                            let val: i64 = if *v { 1 } else { 0 };
+                            self.emit(&format!("cmpq ${}, (%rsp)", val));
+                            self.emit(&format!("jne {}", skip));
+                            self.emit("addq $8, %rsp");
+                            self.gen_block(&arm.body);
+                            self.emit(&format!("jmp {}", end_label));
+                            self.emit_label(&skip);
+                        }
+                        Pattern::Wildcard(_) => {
+                            self.emit("addq $8, %rsp");
+                            self.gen_block(&arm.body);
+                            self.emit(&format!("jmp {}", end_label));
+                        }
+                    }
+                }
+
+                // Fallthrough: no arm matched — clean up subject from stack
+                self.emit("addq $8, %rsp");
                 self.emit_label(&end_label);
             }
         }
@@ -591,6 +688,15 @@ fn count_locals_in_block(block: &Block) -> usize {
             }
             Stmt::While { body, .. } => {
                 count += count_locals_in_block(body);
+            }
+            Stmt::For { body, .. } => {
+                count += 2; // loop variable + __for_end
+                count += count_locals_in_block(body);
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    count += count_locals_in_block(&arm.body);
+                }
             }
             _ => {}
         }

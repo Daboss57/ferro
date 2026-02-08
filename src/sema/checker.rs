@@ -34,6 +34,7 @@ pub struct Checker {
     scopes: Vec<HashMap<String, VarInfo>>,
     functions: HashMap<String, FuncInfo>,
     current_return_type: Type,
+    loop_depth: usize,
 }
 
 impl Checker {
@@ -42,6 +43,7 @@ impl Checker {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             current_return_type: Type::Void,
+            loop_depth: 0,
         }
     }
 
@@ -325,7 +327,84 @@ impl Checker {
                         *span,
                     ));
                 }
+                self.loop_depth += 1;
                 self.check_block(body)?;
+                self.loop_depth -= 1;
+                Ok(())
+            }
+
+            Stmt::For { var, start, end, body, span } => {
+                let start_ty = self.check_expr(start)?;
+                let end_ty = self.check_expr(end)?;
+                if start_ty != Type::I64 {
+                    return Err(CompileError::new(
+                        format!("for range start must be 'i64', got '{}'", start_ty),
+                        *span,
+                    ));
+                }
+                if end_ty != Type::I64 {
+                    return Err(CompileError::new(
+                        format!("for range end must be 'i64', got '{}'", end_ty),
+                        *span,
+                    ));
+                }
+                // The loop variable is scoped inside the for body
+                self.push_scope();
+                self.define_var(var, Type::I64, false);
+                self.loop_depth += 1;
+                for stmt in &body.stmts {
+                    self.check_stmt(stmt)?;
+                }
+                self.loop_depth -= 1;
+                self.pop_scope();
+                Ok(())
+            }
+
+            Stmt::Break { span } => {
+                if self.loop_depth == 0 {
+                    return Err(CompileError::new(
+                        "break outside of loop",
+                        *span,
+                    ));
+                }
+                Ok(())
+            }
+
+            Stmt::Continue { span } => {
+                if self.loop_depth == 0 {
+                    return Err(CompileError::new(
+                        "continue outside of loop",
+                        *span,
+                    ));
+                }
+                Ok(())
+            }
+
+            Stmt::Match { subject, arms, span } => {
+                let subject_ty = self.check_expr(subject)?;
+                for arm in arms {
+                    // Check pattern type matches subject
+                    match &arm.pattern {
+                        Pattern::IntLit(_, _) => {
+                            if subject_ty != Type::I64 {
+                                return Err(CompileError::new(
+                                    format!("integer pattern in match on '{}'", subject_ty),
+                                    *span,
+                                ));
+                            }
+                        }
+                        Pattern::BoolLit(_, _) => {
+                            if subject_ty != Type::Bool {
+                                return Err(CompileError::new(
+                                    format!("boolean pattern in match on '{}'", subject_ty),
+                                    *span,
+                                ));
+                            }
+                        }
+                        Pattern::Wildcard(_) => {} // matches anything
+                    }
+                    self.check_block(&arm.body)?;
+                }
                 Ok(())
             }
         }

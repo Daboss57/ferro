@@ -111,6 +111,41 @@ fn print_stmt(out: &mut String, stmt: &Stmt, level: usize) {
             indent(out, level);
             out.push_str("}\n");
         }
+        Stmt::For { var, start, end, body, .. } => {
+            write!(out, "for {} in ", var).unwrap();
+            print_expr(out, start);
+            out.push_str("..");
+            print_expr(out, end);
+            out.push_str(" {\n");
+            print_block(out, body, level + 1);
+            indent(out, level);
+            out.push_str("}\n");
+        }
+        Stmt::Break { .. } => {
+            out.push_str("break;\n");
+        }
+        Stmt::Continue { .. } => {
+            out.push_str("continue;\n");
+        }
+        Stmt::Match { subject, arms, .. } => {
+            out.push_str("match ");
+            print_expr(out, subject);
+            out.push_str(" {\n");
+            for arm in arms {
+                indent(out, level + 1);
+                match &arm.pattern {
+                    Pattern::IntLit(v, _) => write!(out, "{}", v).unwrap(),
+                    Pattern::BoolLit(v, _) => write!(out, "{}", v).unwrap(),
+                    Pattern::Wildcard(_) => out.push('_'),
+                }
+                out.push_str(" => {\n");
+                print_block(out, &arm.body, level + 2);
+                indent(out, level + 1);
+                out.push_str("}\n");
+            }
+            indent(out, level);
+            out.push_str("}\n");
+        }
     }
 }
 

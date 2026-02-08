@@ -570,3 +570,232 @@ fn test_e2e_array_type_inferred() {
         "200"
     );
 }
+
+// ── For Loops, Break, Continue, Match (Phase 10) ──────
+
+#[test]
+fn test_e2e_for_basic() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                for i in 0..5 {
+                    print(i);
+                }
+            }"
+        ),
+        "0\n1\n2\n3\n4"
+    );
+}
+
+#[test]
+fn test_e2e_for_sum() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let mut sum: i64 = 0;
+                for i in 1..6 {
+                    sum = sum + i;
+                }
+                print(sum);
+            }"
+        ),
+        "15"
+    );
+}
+
+#[test]
+fn test_e2e_for_with_variable_bound() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let n: i64 = 4;
+                for i in 0..n {
+                    print(i);
+                }
+            }"
+        ),
+        "0\n1\n2\n3"
+    );
+}
+
+#[test]
+fn test_e2e_for_nested() {
+    // Prints i*10 + j for i=0..2, j=0..3
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                for i in 0..2 {
+                    for j in 0..3 {
+                        print(i * 10 + j);
+                    }
+                }
+            }"
+        ),
+        "0\n1\n2\n10\n11\n12"
+    );
+}
+
+#[test]
+fn test_e2e_for_empty_range() {
+    // 5..3 should execute 0 times
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                for i in 5..3 {
+                    print(i);
+                }
+                print(0);
+            }"
+        ),
+        "0"
+    );
+}
+
+#[test]
+fn test_e2e_break_simple() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let mut i: i64 = 0;
+                while i < 10 {
+                    if i == 3 { break; }
+                    print(i);
+                    i = i + 1;
+                }
+            }"
+        ),
+        "0\n1\n2"
+    );
+}
+
+#[test]
+fn test_e2e_break_in_for() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                for i in 0..100 {
+                    if i == 4 { break; }
+                    print(i);
+                }
+            }"
+        ),
+        "0\n1\n2\n3"
+    );
+}
+
+#[test]
+fn test_e2e_continue_simple() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let mut i: i64 = 0;
+                while i < 5 {
+                    i = i + 1;
+                    if i == 3 { continue; }
+                    print(i);
+                }
+            }"
+        ),
+        "1\n2\n4\n5"
+    );
+}
+
+#[test]
+fn test_e2e_continue_in_for() {
+    // Skip even numbers
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                for i in 0..6 {
+                    if i % 2 == 0 { continue; }
+                    print(i);
+                }
+            }"
+        ),
+        "1\n3\n5"
+    );
+}
+
+#[test]
+fn test_e2e_match_int() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let x: i64 = 2;
+                match x {
+                    1 => { print(10); }
+                    2 => { print(20); }
+                    3 => { print(30); }
+                    _ => { print(0); }
+                }
+            }"
+        ),
+        "20"
+    );
+}
+
+#[test]
+fn test_e2e_match_wildcard() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let x: i64 = 99;
+                match x {
+                    1 => { print(10); }
+                    _ => { print(42); }
+                }
+            }"
+        ),
+        "42"
+    );
+}
+
+#[test]
+fn test_e2e_match_bool() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                let flag: bool = true;
+                match flag {
+                    true => { print(1); }
+                    false => { print(0); }
+                }
+            }"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn test_e2e_match_first_arm() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                match 1 {
+                    1 => { print(100); }
+                    2 => { print(200); }
+                    _ => { print(0); }
+                }
+            }"
+        ),
+        "100"
+    );
+}
+
+#[test]
+fn test_e2e_match_in_loop() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                for i in 0..4 {
+                    match i {
+                        0 => { print(10); }
+                        1 => { print(20); }
+                        _ => { print(99); }
+                    }
+                }
+            }"
+        ),
+        "10\n20\n99\n99"
+    );
+}

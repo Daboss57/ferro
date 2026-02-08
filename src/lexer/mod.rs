@@ -249,6 +249,19 @@ impl Lexer {
             ':' => TokenKind::Colon,
             ',' => TokenKind::Comma,
 
+            '.' => {
+                if self.peek() == Some('.') {
+                    self.advance();
+                    TokenKind::DotDot     // ..
+                } else {
+                    let end = self.current_pos();
+                    return Err(CompileError::new(
+                        "unexpected character '.' (did you mean '..'?)",
+                        Span::new(start, end),
+                    ));
+                }
+            }
+
             // Two-character operators: need to peek ahead
             '-' => {
                 if self.peek() == Some('>') {
@@ -263,6 +276,9 @@ impl Lexer {
                 if self.peek() == Some('=') {
                     self.advance();
                     TokenKind::EqualEqual // ==
+                } else if self.peek() == Some('>') {
+                    self.advance();
+                    TokenKind::FatArrow   // =>
                 } else {
                     TokenKind::Equals     // =
                 }

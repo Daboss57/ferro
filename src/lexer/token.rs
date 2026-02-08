@@ -17,6 +17,11 @@ pub enum TokenKind {
     If,       // if
     Else,     // else
     While,    // while
+    For,      // for
+    In,       // in
+    Break,    // break
+    Continue, // continue
+    Match,    // match
     Return,   // return
     True,     // true
     False,    // false
@@ -38,7 +43,9 @@ pub enum TokenKind {
     AmpAmp,       // &&
     PipePipe,     // ||
     Arrow,        // ->
+    FatArrow,     // =>
     PipeArrow,    // |>
+    DotDot,       // ..
 
     // Punctuation
     LParen,    // (
@@ -65,15 +72,20 @@ pub struct Token {
 /// Look up whether an identifier is actually a keyword.
 pub fn lookup_keyword(word: &str) -> Option<TokenKind> {
     match word {
-        "fn"     => Some(TokenKind::Fn),
-        "let"    => Some(TokenKind::Let),
-        "mut"    => Some(TokenKind::Mut),
-        "if"     => Some(TokenKind::If),
-        "else"   => Some(TokenKind::Else),
-        "while"  => Some(TokenKind::While),
-        "return" => Some(TokenKind::Return),
-        "true"   => Some(TokenKind::True),
-        "false"  => Some(TokenKind::False),
+        "fn"       => Some(TokenKind::Fn),
+        "let"      => Some(TokenKind::Let),
+        "mut"      => Some(TokenKind::Mut),
+        "if"       => Some(TokenKind::If),
+        "else"     => Some(TokenKind::Else),
+        "while"    => Some(TokenKind::While),
+        "for"      => Some(TokenKind::For),
+        "in"       => Some(TokenKind::In),
+        "break"    => Some(TokenKind::Break),
+        "continue" => Some(TokenKind::Continue),
+        "match"    => Some(TokenKind::Match),
+        "return"   => Some(TokenKind::Return),
+        "true"     => Some(TokenKind::True),
+        "false"    => Some(TokenKind::False),
         _        => None,
     }
 }

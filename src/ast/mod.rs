@@ -88,6 +88,47 @@ pub enum Stmt {
         body: Block,
         span: Span,
     },
+    /// `for var in start..end { ... }`
+    For {
+        var: String,
+        start: Expr,
+        end: Expr,
+        body: Block,
+        span: Span,
+    },
+    /// `break;`
+    Break {
+        span: Span,
+    },
+    /// `continue;`
+    Continue {
+        span: Span,
+    },
+    /// `match subject { pattern => { body } ... }`
+    Match {
+        subject: Expr,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+}
+
+/// A single arm of a match statement.
+#[derive(Debug)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Block,
+    pub span: Span,
+}
+
+/// A pattern in a match arm.
+#[derive(Debug)]
+pub enum Pattern {
+    /// Integer literal: `42`
+    IntLit(i64, Span),
+    /// Boolean literal: `true` / `false`
+    BoolLit(bool, Span),
+    /// Wildcard: `_`
+    Wildcard(Span),
 }
 
 /// An expression — things that PRODUCE a value.

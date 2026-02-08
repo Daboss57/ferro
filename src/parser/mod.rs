@@ -184,6 +184,10 @@ impl Parser {
             TokenKind::Return => self.parse_return(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
+            TokenKind::For => self.parse_for(),
+            TokenKind::Break => self.parse_break(),
+            TokenKind::Continue => self.parse_continue(),
+            TokenKind::Match => self.parse_match(),
             _ => self.parse_expr_or_assign_stmt(),
         }
     }
@@ -279,6 +283,104 @@ impl Parser {
             body,
             span: Span::new(start.start, self.span().start),
         })
+    }
+
+    /// Parse: `for var in start..end { body }`
+    fn parse_for(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::For)?;
+        let (var, _) = self.expect_ident()?;
+        self.expect(&TokenKind::In)?;
+        let start_expr = self.parse_expr_bp(5)?; // parse before `..` (higher than comparison)
+        self.expect(&TokenKind::DotDot)?;
+        let end_expr = self.parse_expr_bp(5)?;
+        let body = self.parse_block()?;
+
+        Ok(Stmt::For {
+            var,
+            start: start_expr,
+            end: end_expr,
+            body,
+            span: Span::new(start.start, self.span().start),
+        })
+    }
+
+    /// Parse: `break;`
+    fn parse_break(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::Break)?;
+        self.expect(&TokenKind::Semicolon)?;
+        Ok(Stmt::Break {
+            span: Span::new(start.start, self.span().start),
+        })
+    }
+
+    /// Parse: `continue;`
+    fn parse_continue(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::Continue)?;
+        self.expect(&TokenKind::Semicolon)?;
+        Ok(Stmt::Continue {
+            span: Span::new(start.start, self.span().start),
+        })
+    }
+
+    /// Parse: `match expr { pattern => { body } ... }`
+    fn parse_match(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::Match)?;
+        let subject = self.parse_expr()?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut arms = Vec::new();
+        while *self.peek() != TokenKind::RBrace {
+            let arm_start = self.span();
+            let pattern = self.parse_pattern()?;
+            self.expect(&TokenKind::FatArrow)?;
+            let body = self.parse_block()?;
+            arms.push(MatchArm {
+                pattern,
+                body,
+                span: Span::new(arm_start.start, self.span().start),
+            });
+        }
+        self.expect(&TokenKind::RBrace)?;
+
+        Ok(Stmt::Match {
+            subject,
+            arms,
+            span: Span::new(start.start, self.span().start),
+        })
+    }
+
+    /// Parse a match pattern: integer, boolean, or `_` wildcard.
+    fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
+        match self.peek().clone() {
+            TokenKind::Int(v) => {
+                let span = self.span();
+                self.advance();
+                Ok(Pattern::IntLit(v, span))
+            }
+            TokenKind::True => {
+                let span = self.span();
+                self.advance();
+                Ok(Pattern::BoolLit(true, span))
+            }
+            TokenKind::False => {
+                let span = self.span();
+                self.advance();
+                Ok(Pattern::BoolLit(false, span))
+            }
+            TokenKind::Ident(ref name) if name == "_" => {
+                let span = self.span();
+                self.advance();
+                Ok(Pattern::Wildcard(span))
+            }
+            _ => Err(CompileError::new(
+                format!("expected pattern (integer, bool, or _), found {:?}", self.peek()),
+                self.span(),
+            )),
+        }
     }
 
     /// Parse an expression-statement, assignment, or tail expression.
