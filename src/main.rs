@@ -78,7 +78,13 @@ fn compile(filename: &str) {
     println!("{}", ferro::ast::pretty::pretty_print(&program));
     println!("-----------");
 
-    // TODO Phase 4: Semantic analysis (type checking, name resolution)
+    // Phase 4: Semantic analysis (type checking, name resolution)
+    let mut checker = ferro::sema::checker::Checker::new();
+    if let Err(e) = checker.check_program(&program) {
+        e.report(&source, filename);
+        process::exit(1);
+    }
+    println!("  Type check passed!");
 
     // Phase 1: Emit hardcoded hello-world assembly as proof of concept
     let asm = ferro::codegen::emit_hello_world();
