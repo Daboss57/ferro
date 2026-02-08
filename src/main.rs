@@ -86,8 +86,9 @@ fn compile(filename: &str) {
     }
     println!("  Type check passed!");
 
-    // Phase 1: Emit hardcoded hello-world assembly as proof of concept
-    let asm = ferro::codegen::emit_hello_world();
+    // Phase 5: Generate x86-64 assembly
+    let codegen = ferro::codegen::Codegen::new();
+    let asm = codegen.generate(&program);
 
     // Derive output filenames from input
     let stem = Path::new(filename)

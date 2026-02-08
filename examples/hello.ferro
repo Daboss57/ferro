@@ -1,7 +1,4 @@
-fn add(a: i64, b: i64) -> i64 {
-    return a + b;
-}
-
 fn main() {
-    let x: i64 = y;
+    let x: i64 = 1 + 2 * 3;
+    print(x);
 }
