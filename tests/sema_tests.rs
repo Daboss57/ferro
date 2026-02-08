@@ -610,3 +610,177 @@ fn test_enum_return_type() {
         fn main() { let a: Answer = ask(); }",
     );
 }
+
+// ── Struct Sema Tests ──────────────────────────────────────
+
+#[test]
+fn test_struct_valid() {
+    check_ok(
+        "struct Point { x: i64, y: i64 }
+        fn main() {
+            let p: Point = Point { x: 10, y: 20 };
+            print(p.x);
+        }",
+    );
+}
+
+#[test]
+fn test_struct_unknown_struct() {
+    check_err(
+        "fn main() { let p: Foo = Foo { x: 1 }; }",
+        "unknown struct",
+    );
+}
+
+#[test]
+fn test_struct_unknown_field() {
+    check_err(
+        "struct Point { x: i64, y: i64 }
+        fn main() { let p: Point = Point { x: 1, y: 2 }; print(p.z); }",
+        "has no field 'z'",
+    );
+}
+
+#[test]
+fn test_struct_missing_field() {
+    check_err(
+        "struct Point { x: i64, y: i64 }
+        fn main() { let p: Point = Point { x: 1 }; }",
+        "missing field 'y'",
+    );
+}
+
+#[test]
+fn test_struct_field_type_mismatch() {
+    check_err(
+        "struct Point { x: i64, y: i64 }
+        fn main() { let p: Point = Point { x: 1, y: true }; }",
+        "expected type 'i64', got 'bool'",
+    );
+}
+
+#[test]
+fn test_struct_field_access_non_struct() {
+    check_err(
+        "fn main() { let x: i64 = 5; print(x.foo); }",
+        "field access on non-struct",
+    );
+}
+
+#[test]
+fn test_struct_field_assign_valid() {
+    check_ok(
+        "struct Point { x: i64, y: i64 }
+        fn main() {
+            let p: Point = Point { x: 1, y: 2 };
+            p.x = 42;
+        }",
+    );
+}
+
+#[test]
+fn test_struct_field_assign_type_mismatch() {
+    check_err(
+        "struct Point { x: i64, y: i64 }
+        fn main() {
+            let p: Point = Point { x: 1, y: 2 };
+            p.x = true;
+        }",
+        "expected type 'i64', got 'bool'",
+    );
+}
+
+#[test]
+fn test_struct_type_annotation() {
+    check_ok(
+        "struct Point { x: i64, y: i64 }
+        fn main() {
+            let p: Point = Point { x: 10, y: 20 };
+            let sum: i64 = p.x + p.y;
+            print(sum);
+        }",
+    );
+}
+
+// ── Defer Sema Tests ───────────────────────────────────────
+
+#[test]
+fn test_defer_valid() {
+    check_ok(
+        "fn cleanup() { print(1); }
+        fn main() { defer cleanup(); }",
+    );
+}
+
+#[test]
+fn test_defer_undeclared_function() {
+    check_err(
+        "fn main() { defer unknown(); }",
+        "undeclared function",
+    );
+}
+
+#[test]
+fn test_defer_print_valid() {
+    check_ok(
+        "fn main() { defer print(42); }",
+    );
+}
+
+// ── Try/Fail Sema Tests ────────────────────────────────────
+
+#[test]
+fn test_tryfail_valid() {
+    check_ok(
+        "fn risky() -> i64 ! str { 42 }
+        fn caller() -> i64 ! str { let x: i64 = try risky(); x }
+        fn main() { caller(); }",
+    );
+}
+
+#[test]
+fn test_fail_in_non_failable() {
+    check_err(
+        "fn main() { fail \"error\"; }",
+        "only be used in failable",
+    );
+}
+
+#[test]
+fn test_try_in_non_failable() {
+    check_err(
+        "fn risky() -> i64 ! str { 42 }
+        fn main() { let x: i64 = try risky(); }",
+        "only be used in failable",
+    );
+}
+
+#[test]
+fn test_try_on_non_failable_function() {
+    check_err(
+        "fn safe() -> i64 { 42 }
+        fn caller() -> i64 ! str { let x: i64 = try safe(); x }
+        fn main() { caller(); }",
+        "non-failable function",
+    );
+}
+
+#[test]
+fn test_fail_requires_string() {
+    check_err(
+        "fn risky() -> i64 ! str { fail 42; }
+        fn main() { risky(); }",
+        "expects a string",
+    );
+}
+
+#[test]
+fn test_failable_return_type() {
+    check_ok(
+        "fn divide(a: i64, b: i64) -> i64 ! str {
+            if b == 0 { fail \"div by zero\"; }
+            a / b
+        }
+        fn main() { divide(10, 2); }",
+    );
+}

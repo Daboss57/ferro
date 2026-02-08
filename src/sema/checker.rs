@@ -26,6 +26,7 @@ struct VarInfo {
 struct FuncInfo {
     param_types: Vec<Type>,
     return_type: Type,
+    can_fail: bool,
 }
 
 /// Information about a declared enum.
@@ -34,13 +35,21 @@ struct EnumInfo {
     variants: Vec<String>,
 }
 
+/// Information about a declared struct.
+#[derive(Debug, Clone)]
+struct StructInfo {
+    fields: Vec<(String, Type)>, // (name, type) pairs in order
+}
+
 /// A scope is a mapping from names to variable info.
 /// We use a stack of scopes to handle nested blocks.
 pub struct Checker {
     scopes: Vec<HashMap<String, VarInfo>>,
     functions: HashMap<String, FuncInfo>,
     enums: HashMap<String, EnumInfo>,
+    structs: HashMap<String, StructInfo>,
     current_return_type: Type,
+    current_can_fail: bool,
     loop_depth: usize,
 }
 
@@ -50,7 +59,9 @@ impl Checker {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             enums: HashMap::new(),
+            structs: HashMap::new(),
             current_return_type: Type::Void,
+            current_can_fail: false,
             loop_depth: 0,
         }
     }
@@ -109,13 +120,14 @@ impl Checker {
     }
 
     fn resolve_type_or_enum(&self, name: &str, span: Span) -> Result<Type, CompileError> {
-        // Handle array types
         if name.starts_with('[') && name.ends_with(']') {
             return self.resolve_type(name, span);
         }
-        // Check enum types first
         if self.enums.contains_key(name) {
             return Ok(Type::Enum(name.to_string()));
+        }
+        if self.structs.contains_key(name) {
+            return Ok(Type::Struct(name.to_string()));
         }
         self.resolve_type(name, span)
     }
@@ -132,6 +144,19 @@ impl Checker {
             );
         }
 
+        // Register struct definitions
+        for struct_def in &program.structs {
+            let mut fields = Vec::new();
+            for field in &struct_def.fields {
+                let ty = self.resolve_type_or_enum(&field.type_name, field.span)?;
+                fields.push((field.name.clone(), ty));
+            }
+            self.structs.insert(
+                struct_def.name.clone(),
+                StructInfo { fields },
+            );
+        }
+
         // First pass: register all function signatures
         for func in &program.functions {
             let mut param_types = Vec::new();
@@ -145,7 +170,7 @@ impl Checker {
             };
             self.functions.insert(
                 func.name.clone(),
-                FuncInfo { param_types, return_type },
+                FuncInfo { param_types, return_type, can_fail: func.can_fail },
             );
         }
 
@@ -156,6 +181,7 @@ impl Checker {
             FuncInfo {
                 param_types: vec![Type::I64], // placeholder, check_call handles it
                 return_type: Type::Void,
+                can_fail: false,
             },
         );
 
@@ -165,6 +191,7 @@ impl Checker {
             FuncInfo {
                 param_types: vec![Type::Str],
                 return_type: Type::I64,
+                can_fail: false,
             },
         );
 
@@ -181,6 +208,7 @@ impl Checker {
             Some(name) => self.resolve_type_or_enum(name, func.span)?,
             None => Type::Void,
         };
+        self.current_can_fail = func.can_fail;
 
         self.push_scope();
 
@@ -297,6 +325,46 @@ impl Checker {
                 Ok(())
             }
 
+            Stmt::FieldAssign { object, field, value, span } => {
+                let obj_ty = match self.lookup_var(object) {
+                    Some(info) => info.ty.clone(),
+                    None => {
+                        return Err(CompileError::new(
+                            format!("undeclared variable '{}'", object),
+                            *span,
+                        ));
+                    }
+                };
+                match &obj_ty {
+                    Type::Struct(sname) => {
+                        let info = self.structs.get(sname).unwrap().clone();
+                        match info.fields.iter().find(|(n, _)| n == field) {
+                            Some((_, expected_ty)) => {
+                                let val_ty = self.check_expr(value)?;
+                                if val_ty != *expected_ty {
+                                    return Err(CompileError::new(
+                                        format!(
+                                            "field '{}' expected type '{}', got '{}'",
+                                            field, expected_ty, val_ty
+                                        ),
+                                        *span,
+                                    ));
+                                }
+                                Ok(())
+                            }
+                            None => Err(CompileError::new(
+                                format!("struct '{}' has no field '{}'", sname, field),
+                                *span,
+                            )),
+                        }
+                    }
+                    _ => Err(CompileError::new(
+                        format!("field assignment on non-struct type '{}'", obj_ty),
+                        *span,
+                    )),
+                }
+            }
+
             Stmt::Return { value, span } => {
                 let return_ty = match value {
                     Some(expr) => self.check_expr(expr)?,
@@ -308,6 +376,28 @@ impl Checker {
                             "return type mismatch: function returns '{}' but got '{}'",
                             self.current_return_type, return_ty
                         ),
+                        *span,
+                    ));
+                }
+                Ok(())
+            }
+
+            Stmt::Defer { expr, .. } => {
+                self.check_expr(expr)?;
+                Ok(())
+            }
+
+            Stmt::Fail { message, span } => {
+                if !self.current_can_fail {
+                    return Err(CompileError::new(
+                        "'fail' can only be used in failable functions (-> T ! str)",
+                        *span,
+                    ));
+                }
+                let msg_ty = self.check_expr(message)?;
+                if msg_ty != Type::Str {
+                    return Err(CompileError::new(
+                        format!("'fail' expects a string message, got '{}'", msg_ty),
                         *span,
                     ));
                 }
@@ -705,6 +795,103 @@ impl Checker {
                     ));
                 }
                 Ok(Type::Enum(enum_name.clone()))
+            }
+
+            Expr::StructLit { name, fields, span } => {
+                let info = match self.structs.get(name) {
+                    Some(info) => info.clone(),
+                    None => {
+                        return Err(CompileError::new(
+                            format!("unknown struct '{}'", name),
+                            *span,
+                        ));
+                    }
+                };
+                // Check each provided field exists and types match
+                for (fname, fexpr) in fields {
+                    let field_info = info.fields.iter().find(|(n, _)| n == fname);
+                    match field_info {
+                        None => {
+                            return Err(CompileError::new(
+                                format!("struct '{}' has no field '{}'", name, fname),
+                                *span,
+                            ));
+                        }
+                        Some((_, expected_ty)) => {
+                            let actual_ty = self.check_expr(fexpr)?;
+                            if actual_ty != *expected_ty {
+                                return Err(CompileError::new(
+                                    format!(
+                                        "field '{}' expected type '{}', got '{}'",
+                                        fname, expected_ty, actual_ty
+                                    ),
+                                    *span,
+                                ));
+                            }
+                        }
+                    }
+                }
+                // Check all fields are provided
+                for (fname, _) in &info.fields {
+                    if !fields.iter().any(|(n, _)| n == fname) {
+                        return Err(CompileError::new(
+                            format!("missing field '{}' in struct '{}'", fname, name),
+                            *span,
+                        ));
+                    }
+                }
+                Ok(Type::Struct(name.clone()))
+            }
+
+            Expr::FieldAccess { object, field, span } => {
+                let obj_ty = self.check_expr(object)?;
+                match &obj_ty {
+                    Type::Struct(sname) => {
+                        let info = self.structs.get(sname).unwrap().clone();
+                        match info.fields.iter().find(|(n, _)| n == field) {
+                            Some((_, ty)) => Ok(ty.clone()),
+                            None => Err(CompileError::new(
+                                format!("struct '{}' has no field '{}'", sname, field),
+                                *span,
+                            )),
+                        }
+                    }
+                    _ => Err(CompileError::new(
+                        format!("field access on non-struct type '{}'", obj_ty),
+                        *span,
+                    )),
+                }
+            }
+
+            Expr::Try { expr, span } => {
+                if !self.current_can_fail {
+                    return Err(CompileError::new(
+                        "'try' can only be used in failable functions (-> T ! str)",
+                        *span,
+                    ));
+                }
+                // The inner expression must be a call to a failable function
+                if let Expr::Call { name, .. } = expr.as_ref() {
+                    match self.functions.get(name) {
+                        Some(info) => {
+                            if !info.can_fail {
+                                return Err(CompileError::new(
+                                    format!("'try' used on non-failable function '{}'", name),
+                                    *span,
+                                ));
+                            }
+                            self.check_expr(expr)
+                        }
+                        None => {
+                            self.check_expr(expr)
+                        }
+                    }
+                } else {
+                    Err(CompileError::new(
+                        "'try' must be used with a function call",
+                        *span,
+                    ))
+                }
             }
         }
     }

@@ -8,6 +8,9 @@ pub fn pretty_print(program: &Program) -> String {
     for enum_def in &program.enums {
         print_enum_def(&mut out, enum_def, 0);
     }
+    for struct_def in &program.structs {
+        print_struct_def(&mut out, struct_def, 0);
+    }
     for func in &program.functions {
         print_function(&mut out, func, 0);
     }
@@ -32,6 +35,18 @@ fn print_enum_def(out: &mut String, enum_def: &EnumDef, level: usize) {
     out.push_str(" }\n");
 }
 
+fn print_struct_def(out: &mut String, struct_def: &StructDef, level: usize) {
+    indent(out, level);
+    write!(out, "struct {} {{ ", struct_def.name).unwrap();
+    for (i, field) in struct_def.fields.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        write!(out, "{}: {}", field.name, field.type_name).unwrap();
+    }
+    out.push_str(" }\n");
+}
+
 fn print_function(out: &mut String, func: &Function, level: usize) {
     indent(out, level);
     write!(out, "fn {}(", func.name).unwrap();
@@ -44,6 +59,9 @@ fn print_function(out: &mut String, func: &Function, level: usize) {
     out.push(')');
     if let Some(ret) = &func.return_type {
         write!(out, " -> {}", ret).unwrap();
+        if func.can_fail {
+            out.push_str(" ! str");
+        }
     }
     out.push_str(" {\n");
     print_block(out, &func.body, level + 1);
@@ -87,12 +105,27 @@ fn print_stmt(out: &mut String, stmt: &Stmt, level: usize) {
             print_expr(out, value);
             out.push_str(";\n");
         }
+        Stmt::FieldAssign { object, field, value, .. } => {
+            write!(out, "{}.{} = ", object, field).unwrap();
+            print_expr(out, value);
+            out.push_str(";\n");
+        }
         Stmt::Return { value, .. } => {
             out.push_str("return");
             if let Some(v) = value {
                 out.push(' ');
                 print_expr(out, v);
             }
+            out.push_str(";\n");
+        }
+        Stmt::Defer { expr, .. } => {
+            out.push_str("defer ");
+            print_expr(out, expr);
+            out.push_str(";\n");
+        }
+        Stmt::Fail { message, .. } => {
+            out.push_str("fail ");
+            print_expr(out, message);
             out.push_str(";\n");
         }
         Stmt::Expr { expr, .. } => {
@@ -232,6 +265,25 @@ fn print_expr(out: &mut String, expr: &Expr) {
         }
         Expr::EnumVariant { enum_name, variant, .. } => {
             write!(out, "{}::{}", enum_name, variant).unwrap();
+        }
+        Expr::StructLit { name, fields, .. } => {
+            write!(out, "{} {{ ", name).unwrap();
+            for (i, (fname, fval)) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write!(out, "{}: ", fname).unwrap();
+                print_expr(out, fval);
+            }
+            out.push_str(" }");
+        }
+        Expr::FieldAccess { object, field, .. } => {
+            print_expr(out, object);
+            write!(out, ".{}", field).unwrap();
+        }
+        Expr::Try { expr, .. } => {
+            out.push_str("try ");
+            print_expr(out, expr);
         }
     }
 }

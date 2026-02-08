@@ -1,0 +1,31 @@
+// defer in Ferro — auto-cleanup at scope exit
+// Deferred expressions run in LIFO order (last defer runs first)
+
+fn open_file() -> i64 {
+    print(1);
+    42
+}
+
+fn close_file(handle: i64) {
+    print(handle);
+}
+
+fn process() -> i64 {
+    let f: i64 = open_file();
+    defer close_file(f);
+    defer print(99);
+
+    // Do work...
+    print(2);
+    print(3);
+
+    // When this function returns, deferred calls run in reverse:
+    //   print(99)    — runs second-to-last defer first
+    //   close_file(f) — runs first defer last
+    0
+}
+
+fn main() {
+    let result: i64 = process();
+    print(result);
+}

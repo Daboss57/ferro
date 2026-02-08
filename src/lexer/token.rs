@@ -23,6 +23,10 @@ pub enum TokenKind {
     Continue, // continue
     Match,    // match
     Enum,     // enum
+    Struct,   // struct
+    Defer,    // defer
+    Try,      // try
+    Fail,     // fail
     Return,   // return
     True,     // true
     False,    // false
@@ -47,6 +51,7 @@ pub enum TokenKind {
     FatArrow,     // =>
     PipeArrow,    // |>
     DotDot,       // ..
+    Dot,          // .
     ColonColon,   // ::
 
     // Punctuation
@@ -86,6 +91,10 @@ pub fn lookup_keyword(word: &str) -> Option<TokenKind> {
         "continue" => Some(TokenKind::Continue),
         "match"    => Some(TokenKind::Match),
         "enum"     => Some(TokenKind::Enum),
+        "struct"   => Some(TokenKind::Struct),
+        "defer"    => Some(TokenKind::Defer),
+        "try"      => Some(TokenKind::Try),
+        "fail"     => Some(TokenKind::Fail),
         "return"   => Some(TokenKind::Return),
         "true"     => Some(TokenKind::True),
         "false"    => Some(TokenKind::False),

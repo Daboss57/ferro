@@ -38,6 +38,26 @@ impl Parser {
         tok
     }
 
+    /// Peek at token at offset from current position.
+    fn peek_at(&self, offset: usize) -> &TokenKind {
+        let idx = self.pos + offset;
+        if idx < self.tokens.len() {
+            &self.tokens[idx].kind
+        } else {
+            &TokenKind::Eof
+        }
+    }
+
+    /// Check if current `{` starts a struct literal (next tokens: `Ident :` or `}`).
+    fn is_struct_literal(&self) -> bool {
+        // Current token is `{`, check tokens after it
+        if let TokenKind::Ident(_) = self.peek_at(1) {
+            *self.peek_at(2) == TokenKind::Colon
+        } else {
+            *self.peek_at(1) == TokenKind::RBrace // empty struct `Name {}`
+        }
+    }
+
     /// Expect the current token to be a specific kind, consume it, or error.
     fn expect(&mut self, expected: &TokenKind) -> Result<Span, CompileError> {
         if self.peek() == expected {
@@ -100,14 +120,15 @@ impl Parser {
     pub fn parse_program(&mut self) -> Result<Program, CompileError> {
         let mut functions = Vec::new();
         let mut enums = Vec::new();
+        let mut structs = Vec::new();
         while *self.peek() != TokenKind::Eof {
-            if *self.peek() == TokenKind::Enum {
-                enums.push(self.parse_enum_def()?);
-            } else {
-                functions.push(self.parse_function()?);
+            match self.peek() {
+                TokenKind::Enum => enums.push(self.parse_enum_def()?),
+                TokenKind::Struct => structs.push(self.parse_struct_def()?),
+                _ => functions.push(self.parse_function()?),
             }
         }
-        Ok(Program { functions, enums })
+        Ok(Program { functions, enums, structs })
     }
 
     // ── Functions ───────────────────────────────────────────
@@ -138,14 +159,27 @@ impl Parser {
         }
         self.expect(&TokenKind::RParen)?;
 
-        // Optional return type: `-> type`
-        let return_type = if *self.peek() == TokenKind::Arrow {
+        // Optional return type: `-> type` or `-> type ! str`
+        let mut return_type = None;
+        let mut can_fail = false;
+        if *self.peek() == TokenKind::Arrow {
             self.advance();
             let (type_name, _) = self.parse_type_name()?;
-            Some(type_name)
-        } else {
-            None
-        };
+            return_type = Some(type_name);
+            // Check for `! str` (failable)
+            if *self.peek() == TokenKind::Bang {
+                self.advance();
+                // Expect `str` after `!`
+                let (err_type, _) = self.expect_ident()?;
+                if err_type != "str" {
+                    return Err(CompileError::new(
+                        format!("expected 'str' after '!' in return type, got '{}'", err_type),
+                        self.span(),
+                    ));
+                }
+                can_fail = true;
+            }
+        }
 
         let body = self.parse_block()?;
         let end = self.span();
@@ -154,6 +188,7 @@ impl Parser {
             name,
             params,
             return_type,
+            can_fail,
             body,
             span: Span::new(start.start, end.start),
         })
@@ -188,6 +223,41 @@ impl Parser {
         })
     }
 
+    /// Parse: `struct Name { field: type, ... }`
+    fn parse_struct_def(&mut self) -> Result<StructDef, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::Struct)?;
+        let (name, _) = self.expect_ident()?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut fields = Vec::new();
+        while *self.peek() != TokenKind::RBrace {
+            if !fields.is_empty() {
+                self.expect(&TokenKind::Comma)?;
+                if *self.peek() == TokenKind::RBrace {
+                    break; // trailing comma
+                }
+            }
+            let field_start = self.span();
+            let (field_name, _) = self.expect_ident()?;
+            self.expect(&TokenKind::Colon)?;
+            let (type_name, _) = self.parse_type_name()?;
+            fields.push(StructField {
+                name: field_name,
+                type_name,
+                span: Span::new(field_start.start, self.span().start),
+            });
+        }
+        let end = self.span();
+        self.expect(&TokenKind::RBrace)?;
+
+        Ok(StructDef {
+            name,
+            fields,
+            span: Span::new(start.start, end.start),
+        })
+    }
+
     // ── Blocks ──────────────────────────────────────────────
 
     /// Parse: `{ stmt1; stmt2; ... }`
@@ -216,6 +286,8 @@ impl Parser {
         match self.peek() {
             TokenKind::Let => self.parse_let(),
             TokenKind::Return => self.parse_return(),
+            TokenKind::Defer => self.parse_defer(),
+            TokenKind::Fail => self.parse_fail(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
             TokenKind::For => self.parse_for(),
@@ -277,6 +349,30 @@ impl Parser {
 
         Ok(Stmt::Return {
             value,
+            span: Span::new(start.start, self.span().start),
+        })
+    }
+
+    /// Parse: `defer expr;`
+    fn parse_defer(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::Defer)?;
+        let expr = self.parse_expr()?;
+        self.expect(&TokenKind::Semicolon)?;
+        Ok(Stmt::Defer {
+            expr,
+            span: Span::new(start.start, self.span().start),
+        })
+    }
+
+    /// Parse: `fail expr;`
+    fn parse_fail(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.span();
+        self.expect(&TokenKind::Fail)?;
+        let message = self.parse_expr()?;
+        self.expect(&TokenKind::Semicolon)?;
+        Ok(Stmt::Fail {
+            message,
             span: Span::new(start.start, self.span().start),
         })
     }
@@ -465,6 +561,22 @@ impl Parser {
                         Span::new(start.start, self.span().start),
                     ));
                 }
+            } else if let Expr::FieldAccess { object, field, .. } = expr {
+                if let Expr::Ident { name, .. } = *object {
+                    let value = self.parse_expr()?;
+                    self.expect(&TokenKind::Semicolon)?;
+                    return Ok(Stmt::FieldAssign {
+                        object: name,
+                        field,
+                        value,
+                        span: Span::new(start.start, self.span().start),
+                    });
+                } else {
+                    return Err(CompileError::new(
+                        "invalid field assignment target",
+                        Span::new(start.start, self.span().start),
+                    ));
+                }
             } else {
                 return Err(CompileError::new(
                     "invalid assignment target",
@@ -524,6 +636,19 @@ impl Parser {
                     object: Box::new(lhs),
                     index: Box::new(index),
                     span: Span::new(start_span.start, end.end),
+                };
+                continue;
+            }
+
+            // Postfix: field access `expr.field`
+            if *self.peek() == TokenKind::Dot {
+                let start_span = lhs.span();
+                self.advance(); // eat .
+                let (field, end_span) = self.expect_ident()?;
+                lhs = Expr::FieldAccess {
+                    object: Box::new(lhs),
+                    field,
+                    span: Span::new(start_span.start, end_span.end),
                 };
                 continue;
             }
@@ -663,7 +788,33 @@ impl Parser {
                         args,
                         span: Span::new(span.start, end.end),
                     })
-                } else {
+                }
+                // Check for struct literal: `Name { field: expr, ... }`
+                // Disambiguate from block by checking if Ident followed by Colon after {
+                else if *self.peek() == TokenKind::LBrace && self.is_struct_literal() {
+                    self.advance(); // consume {
+                    let mut fields = Vec::new();
+                    while *self.peek() != TokenKind::RBrace {
+                        if !fields.is_empty() {
+                            self.expect(&TokenKind::Comma)?;
+                            if *self.peek() == TokenKind::RBrace {
+                                break; // trailing comma
+                            }
+                        }
+                        let (field_name, _) = self.expect_ident()?;
+                        self.expect(&TokenKind::Colon)?;
+                        let value = self.parse_expr()?;
+                        fields.push((field_name, value));
+                    }
+                    let end = self.span();
+                    self.expect(&TokenKind::RBrace)?;
+                    Ok(Expr::StructLit {
+                        name,
+                        fields,
+                        span: Span::new(span.start, end.end),
+                    })
+                }
+                else {
                     Ok(Expr::Ident { name, span })
                 }
             }
@@ -697,6 +848,17 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::RParen)?;
                 Ok(expr)
+            }
+            // Try expression: `try expr`
+            TokenKind::Try => {
+                let start = self.span();
+                self.advance();
+                let expr = self.parse_expr_bp(7)?; // high precedence prefix
+                let end = expr.span();
+                Ok(Expr::Try {
+                    expr: Box::new(expr),
+                    span: Span::new(start.start, end.end),
+                })
             }
             // Array literal: `[expr, expr, ...]`
             TokenKind::LBracket => {
@@ -737,7 +899,10 @@ impl Expr {
             | Expr::Call { span, .. }
             | Expr::ArrayLit { span, .. }
             | Expr::Index { span, .. }
-            | Expr::EnumVariant { span, .. } => *span,
+            | Expr::EnumVariant { span, .. }
+            | Expr::StructLit { span, .. }
+            | Expr::FieldAccess { span, .. }
+            | Expr::Try { span, .. } => *span,
         }
     }
 }

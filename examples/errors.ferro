@@ -1,0 +1,22 @@
+// try/fail error handling in Ferro
+// Functions that can fail use -> T ! str return type
+// 'fail' returns an error, 'try' unwraps or propagates
+
+fn divide(a: i64, b: i64) -> i64 ! str {
+    if b == 0 {
+        fail "division by zero";
+    }
+    a / b
+}
+
+fn compute() -> i64 ! str {
+    let x: i64 = try divide(100, 5);
+    let y: i64 = try divide(x, 4);
+    print(x);
+    print(y);
+    0
+}
+
+fn main() {
+    compute();
+}

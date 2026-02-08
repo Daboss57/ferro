@@ -9,6 +9,7 @@ pub enum Type {
     Void,
     Array(Box<Type>, usize),
     Enum(String), // Enum type identified by its name
+    Struct(String), // Struct type identified by its name
 }
 
 impl Type {
@@ -32,6 +33,7 @@ impl std::fmt::Display for Type {
             Type::Void => write!(f, "void"),
             Type::Array(elem, size) => write!(f, "[{}; {}]", elem, size),
             Type::Enum(name) => write!(f, "{}", name),
+            Type::Struct(name) => write!(f, "{}", name),
         }
     }
 }

@@ -32,6 +32,7 @@ struct LocalVar {
     offset: i64,
     ty: ValType,
     array_len: usize, // 0 = scalar, >0 = fixed-size array
+    struct_name: Option<String>, // Some("Point") if this is a struct variable
 }
 
 /// Code generator state.
@@ -52,6 +53,14 @@ pub struct Codegen {
     loop_labels: Vec<(String, String)>,
     /// Maps "EnumName::Variant" → integer discriminant value.
     enum_values: HashMap<String, i64>,
+    /// Maps struct name → list of (field_name, field_type) in order.
+    struct_fields: HashMap<String, Vec<(String, ValType)>>,
+    /// Deferred expressions to run before function return (LIFO order).
+    deferred: Vec<Expr>,
+    /// Set of function names that are failable (-> T ! str).
+    failable_funcs: HashMap<String, bool>,
+    /// Whether the current function being generated is failable.
+    current_failable: bool,
 }
 
 impl Codegen {
@@ -65,6 +74,10 @@ impl Codegen {
             func_return_types: HashMap::new(),
             loop_labels: Vec::new(),
             enum_values: HashMap::new(),
+            struct_fields: HashMap::new(),
+            deferred: Vec::new(),
+            failable_funcs: HashMap::new(),
+            current_failable: false,
         }
     }
 
@@ -78,7 +91,7 @@ impl Codegen {
     fn alloc_local(&mut self, name: &str, ty: ValType) -> i64 {
         self.stack_offset -= 8;
         let offset = self.stack_offset;
-        self.locals.insert(name.to_string(), LocalVar { offset, ty, array_len: 0 });
+        self.locals.insert(name.to_string(), LocalVar { offset, ty, array_len: 0, struct_name: None });
         offset
     }
 
@@ -90,6 +103,14 @@ impl Codegen {
     /// Emit a label.
     fn emit_label(&mut self, label: &str) {
         writeln!(self.output, "{}:", label).unwrap();
+    }
+
+    /// Emit all deferred expressions in reverse order (LIFO).
+    fn emit_deferred(&mut self) {
+        let deferred = self.deferred.clone();
+        for expr in deferred.iter().rev() {
+            self.gen_expr(expr);
+        }
     }
 
     // ── Type inference (for print dispatch) ────────────────
@@ -132,6 +153,25 @@ impl Codegen {
                 }
             }
             Expr::EnumVariant { .. } => ValType::Int, // enums stored as i64
+            Expr::StructLit { .. } => ValType::Int, // struct as a whole isn't a single value
+            Expr::FieldAccess { object, field, .. } => {
+                if let Expr::Ident { name, .. } = object.as_ref() {
+                    if let Some(var) = self.locals.get(name.as_str()) {
+                        if let Some(sname) = &var.struct_name {
+                            if let Some(info) = self.struct_fields.get(sname) {
+                                if let Some((_, ty)) = info.iter().find(|(n, _)| n == field) {
+                                    return *ty;
+                                }
+                            }
+                        }
+                    }
+                }
+                ValType::Int
+            }
+            Expr::Try { expr, .. } => {
+                // try unwraps a failable call — same type as the call's return
+                self.infer_type(expr)
+            }
         }
     }
 
@@ -157,6 +197,14 @@ impl Codegen {
             }
         }
 
+        // Register struct field info
+        for struct_def in &program.structs {
+            let fields: Vec<(String, ValType)> = struct_def.fields.iter()
+                .map(|f| (f.name.clone(), Self::valtype_from_name(&f.type_name)))
+                .collect();
+            self.struct_fields.insert(struct_def.name.clone(), fields);
+        }
+
         // Collect function return types so infer_type can resolve Call exprs.
         for func in &program.functions {
             let rt = match &func.return_type {
@@ -164,6 +212,7 @@ impl Codegen {
                 None => ValType::Void,
             };
             self.func_return_types.insert(func.name.clone(), rt);
+            self.failable_funcs.insert(func.name.clone(), func.can_fail);
         }
         // Emit text section
         writeln!(self.output, "    .section .text").unwrap();
@@ -188,9 +237,11 @@ impl Codegen {
     // ── Functions ───────────────────────────────────────
 
     fn gen_function(&mut self, func: &Function) {
-        // Reset locals for each function
+        // Reset locals and deferred for each function
         self.locals.clear();
         self.stack_offset = 0;
+        self.deferred.clear();
+        self.current_failable = func.can_fail;
 
         // Count how many locals we need (params + local vars in body)
         let local_count = count_locals(func);
@@ -221,8 +272,14 @@ impl Codegen {
         // Generate body
         self.gen_block(&func.body);
 
-        // If we fall through without a return, return 0
+        // Emit deferred expressions before epilogue (LIFO)
+        self.emit_deferred();
+
+        // If we fall through without a return, return 0 (success)
         self.emit("xorl %eax, %eax");
+        if func.can_fail {
+            self.emit("xorl %edx, %edx"); // RDX=0 means success
+        }
 
         // Epilogue
         self.emit_label(&format!(".L{}_epilogue", func.name));
@@ -245,22 +302,40 @@ impl Codegen {
     fn gen_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Let { name, value, .. } => {
-                // Special case: array literal — allocate N slots and init each
+                // Special case: array literal
                 if let Expr::ArrayLit { elements, .. } = value {
                     let count = elements.len();
-                    // Reserve count * 8 bytes on the stack
                     self.stack_offset -= (count as i64) * 8;
                     let base = self.stack_offset;
                     self.locals.insert(name.to_string(), LocalVar {
                         offset: base,
-                        ty: ValType::Int, // element type (all arrays are i64 for now)
+                        ty: ValType::Int,
                         array_len: count,
+                        struct_name: None,
                     });
-                    // Initialize each element
                     for (i, elem) in elements.iter().enumerate() {
                         self.gen_expr(elem);
                         let elem_offset = base + (i as i64) * 8;
                         self.emit(&format!("movq %rax, {}(%rbp)", elem_offset));
+                    }
+                // Special case: struct literal
+                } else if let Expr::StructLit { name: sname, fields, .. } = value {
+                    let struct_info = self.struct_fields.get(sname).cloned().unwrap();
+                    let count = struct_info.len();
+                    self.stack_offset -= (count as i64) * 8;
+                    let base = self.stack_offset;
+                    self.locals.insert(name.to_string(), LocalVar {
+                        offset: base,
+                        ty: ValType::Int,
+                        array_len: 0,
+                        struct_name: Some(sname.clone()),
+                    });
+                    // Store each field at its correct offset
+                    for (fname, fval) in fields {
+                        let idx = struct_info.iter().position(|(n, _)| n == fname).unwrap();
+                        self.gen_expr(fval);
+                        let field_offset = base + (idx as i64) * 8;
+                        self.emit(&format!("movq %rax, {}(%rbp)", field_offset));
                     }
                 } else {
                     // Normal scalar let
@@ -278,27 +353,63 @@ impl Codegen {
             }
 
             Stmt::IndexAssign { object, index, value, .. } => {
-                // Evaluate value → push
                 self.gen_expr(value);
                 self.emit("pushq %rax");
-                // Evaluate index → RAX
                 self.gen_expr(index);
-                self.emit("movq %rax, %rcx");   // RCX = index
-                // Pop value → RAX
+                self.emit("movq %rax, %rcx");
                 self.emit("popq %rax");
-                // Store at base + index*8
                 let base = self.locals[object].offset;
                 self.emit(&format!("movq %rax, {}(%rbp,%rcx,8)", base));
+            }
+
+            Stmt::FieldAssign { object, field, value, .. } => {
+                self.gen_expr(value);
+                let var = &self.locals[object];
+                let sname = var.struct_name.as_ref().unwrap().clone();
+                let base = var.offset;
+                let struct_info = self.struct_fields.get(&sname).unwrap();
+                let idx = struct_info.iter().position(|(n, _)| n == field).unwrap();
+                let field_offset = base + (idx as i64) * 8;
+                self.emit(&format!("movq %rax, {}(%rbp)", field_offset));
             }
 
             Stmt::Return { value, .. } => {
                 if let Some(expr) = value {
                     self.gen_expr(expr);
-                } else {
-                    self.emit("xorl %eax, %eax");
                 }
-                // Jump to epilogue (which restores stack and returns)
-                // We need to know the function name — use a convention
+                if !self.deferred.is_empty() {
+                    // Save return value in aligned stack slot
+                    self.emit("subq $16, %rsp");
+                    self.emit("movq %rax, (%rsp)");
+                    self.emit_deferred();
+                    self.emit("movq (%rsp), %rax");
+                    self.emit("addq $16, %rsp");
+                }
+                if self.current_failable {
+                    self.emit("xorl %edx, %edx"); // RDX=0 = success
+                }
+                self.emit("movq %rbp, %rsp");
+                self.emit("popq %rbp");
+                self.emit("ret");
+            }
+
+            Stmt::Defer { expr, .. } => {
+                self.deferred.push(expr.clone());
+            }
+
+            Stmt::Fail { message, .. } => {
+                // Evaluate message string → RAX (pointer to error string)
+                self.gen_expr(message);
+                // Run deferred before returning error
+                if !self.deferred.is_empty() {
+                    self.emit("subq $16, %rsp");
+                    self.emit("movq %rax, (%rsp)");
+                    self.emit_deferred();
+                    self.emit("movq (%rsp), %rax");
+                    self.emit("addq $16, %rsp");
+                }
+                // Set RDX=1 to signal error, RAX already has the error string
+                self.emit("movq $1, %rdx");
                 self.emit("movq %rbp, %rsp");
                 self.emit("popq %rbp");
                 self.emit("ret");
@@ -310,9 +421,17 @@ impl Codegen {
             }
 
             Stmt::TailExpr { expr, .. } => {
-                // Implicit return: evaluate expression, result stays in RAX
-                // Then jump to function epilogue
                 self.gen_expr(expr);
+                if !self.deferred.is_empty() {
+                    self.emit("subq $16, %rsp");
+                    self.emit("movq %rax, (%rsp)");
+                    self.emit_deferred();
+                    self.emit("movq (%rsp), %rax");
+                    self.emit("addq $16, %rsp");
+                }
+                if self.current_failable {
+                    self.emit("xorl %edx, %edx"); // RDX=0 = success
+                }
                 self.emit("movq %rbp, %rsp");
                 self.emit("popq %rbp");
                 self.emit("ret");
@@ -686,6 +805,46 @@ impl Codegen {
                 let val = self.enum_values[&key];
                 self.emit(&format!("movq ${}, %rax", val));
             }
+
+            Expr::StructLit { .. } => {
+                // Struct literals are handled in gen_stmt(Let)
+            }
+
+            Expr::FieldAccess { object, field, .. } => {
+                if let Expr::Ident { name, .. } = object.as_ref() {
+                    let var = &self.locals[name];
+                    let sname = var.struct_name.as_ref().unwrap().clone();
+                    let base = var.offset;
+                    let struct_info = self.struct_fields.get(&sname).unwrap();
+                    let idx = struct_info.iter().position(|(n, _)| n == field).unwrap();
+                    let field_offset = base + (idx as i64) * 8;
+                    self.emit(&format!("movq {}(%rbp), %rax", field_offset));
+                }
+            }
+
+            Expr::Try { expr, .. } => {
+                // Generate the failable function call
+                self.gen_expr(expr);
+                // After call: RAX = return value, RDX = error flag
+                // If RDX != 0, propagate the error (return with same RAX/RDX)
+                let ok_label = self.new_label("try_ok");
+                self.emit("testq %rdx, %rdx");
+                self.emit(&format!("je {}", ok_label));
+                // Error path: propagate — run deferred, then return with error
+                if !self.deferred.is_empty() {
+                    self.emit("subq $16, %rsp");
+                    self.emit("movq %rax, (%rsp)");
+                    self.emit_deferred();
+                    self.emit("movq (%rsp), %rax");
+                    self.emit("addq $16, %rsp");
+                    self.emit("movq $1, %rdx"); // re-set error flag after deferred
+                }
+                self.emit("movq %rbp, %rsp");
+                self.emit("popq %rbp");
+                self.emit("ret");
+                // Success path: RAX has the unwrapped value
+                self.emit_label(&ok_label);
+            }
         }
     }
 }
@@ -700,9 +859,10 @@ fn count_locals_in_block(block: &Block) -> usize {
     for stmt in &block.stmts {
         match stmt {
             Stmt::Let { value, .. } => {
-                // Arrays need N stack slots, scalars need 1
                 if let Expr::ArrayLit { elements, .. } = value {
                     count += elements.len();
+                } else if let Expr::StructLit { fields, .. } = value {
+                    count += fields.len();
                 } else {
                     count += 1;
                 }

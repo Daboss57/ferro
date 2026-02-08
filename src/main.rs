@@ -72,7 +72,7 @@ fn compile(filename: &str) {
             process::exit(1);
         }
     };
-    println!("  Parsed {} function(s), {} enum(s)", program.functions.len(), program.enums.len());
+    println!("  Parsed {} function(s), {} enum(s), {} struct(s)", program.functions.len(), program.enums.len(), program.structs.len());
     println!();
     println!("--- AST ---");
     println!("{}", ferro::ast::pretty::pretty_print(&program));

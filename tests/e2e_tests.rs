@@ -937,3 +937,361 @@ fn test_e2e_enum_multiple_enums() {
         "20\n100"
     );
 }
+
+// ── Phase: Structs ─────────────────────────────────────────
+
+#[test]
+fn test_e2e_struct_basic() {
+    assert_eq!(
+        compile_and_run(
+            "struct Point { x: i64, y: i64 }
+            fn main() {
+                let p: Point = Point { x: 10, y: 20 };
+                print(p.x);
+                print(p.y);
+            }"
+        ),
+        "10\n20"
+    );
+}
+
+#[test]
+fn test_e2e_struct_field_assign() {
+    assert_eq!(
+        compile_and_run(
+            "struct Point { x: i64, y: i64 }
+            fn main() {
+                let p: Point = Point { x: 1, y: 2 };
+                p.x = 42;
+                print(p.x);
+                print(p.y);
+            }"
+        ),
+        "42\n2"
+    );
+}
+
+#[test]
+fn test_e2e_struct_three_fields() {
+    assert_eq!(
+        compile_and_run(
+            "struct Vec3 { x: i64, y: i64, z: i64 }
+            fn main() {
+                let v: Vec3 = Vec3 { x: 1, y: 2, z: 3 };
+                print(v.x);
+                print(v.y);
+                print(v.z);
+            }"
+        ),
+        "1\n2\n3"
+    );
+}
+
+#[test]
+fn test_e2e_struct_arithmetic() {
+    assert_eq!(
+        compile_and_run(
+            "struct Point { x: i64, y: i64 }
+            fn main() {
+                let p: Point = Point { x: 10, y: 20 };
+                let sum: i64 = p.x + p.y;
+                print(sum);
+            }"
+        ),
+        "30"
+    );
+}
+
+#[test]
+fn test_e2e_struct_in_if() {
+    assert_eq!(
+        compile_and_run(
+            "struct Point { x: i64, y: i64 }
+            fn main() {
+                let p: Point = Point { x: 5, y: 10 };
+                if p.x < p.y {
+                    print(1);
+                } else {
+                    print(0);
+                }
+            }"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn test_e2e_struct_with_bool_field() {
+    assert_eq!(
+        compile_and_run(
+            "struct Flags { active: bool, count: i64 }
+            fn main() {
+                let f: Flags = Flags { active: true, count: 42 };
+                print(f.active);
+                print(f.count);
+            }"
+        ),
+        "true\n42"
+    );
+}
+
+#[test]
+fn test_e2e_struct_multiple() {
+    assert_eq!(
+        compile_and_run(
+            "struct Point { x: i64, y: i64 }
+            fn main() {
+                let a: Point = Point { x: 1, y: 2 };
+                let b: Point = Point { x: 3, y: 4 };
+                print(a.x + b.x);
+                print(a.y + b.y);
+            }"
+        ),
+        "4\n6"
+    );
+}
+
+#[test]
+fn test_e2e_struct_field_in_loop() {
+    assert_eq!(
+        compile_and_run(
+            "struct Counter { val: i64 }
+            fn main() {
+                let c: Counter = Counter { val: 0 };
+                for i in 0..5 {
+                    c.val = c.val + 1;
+                }
+                print(c.val);
+            }"
+        ),
+        "5"
+    );
+}
+
+// ── Phase 12: defer ────────────────────────────────────────
+
+#[test]
+fn test_e2e_defer_basic() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                print(1);
+                defer print(3);
+                print(2);
+            }"
+        ),
+        "1\n2\n3"
+    );
+}
+
+#[test]
+fn test_e2e_defer_lifo_order() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                defer print(3);
+                defer print(2);
+                defer print(1);
+            }"
+        ),
+        "1\n2\n3"
+    );
+}
+
+#[test]
+fn test_e2e_defer_with_return() {
+    assert_eq!(
+        compile_and_run(
+            "fn greet() -> i64 {
+                defer print(99);
+                return 42;
+            }
+            fn main() {
+                let x: i64 = greet();
+                print(x);
+            }"
+        ),
+        "99\n42"
+    );
+}
+
+#[test]
+fn test_e2e_defer_multiple_with_body() {
+    assert_eq!(
+        compile_and_run(
+            "fn main() {
+                print(1);
+                defer print(5);
+                print(2);
+                defer print(4);
+                print(3);
+            }"
+        ),
+        "1\n2\n3\n4\n5"
+    );
+}
+
+#[test]
+fn test_e2e_defer_function_call() {
+    assert_eq!(
+        compile_and_run(
+            "fn cleanup() {
+                print(100);
+            }
+            fn main() {
+                defer cleanup();
+                print(1);
+            }"
+        ),
+        "1\n100"
+    );
+}
+
+#[test]
+fn test_e2e_defer_implicit_return() {
+    assert_eq!(
+        compile_and_run(
+            "fn compute() -> i64 {
+                defer print(99);
+                42
+            }
+            fn main() {
+                let x: i64 = compute();
+                print(x);
+            }"
+        ),
+        "99\n42"
+    );
+}
+
+// ── Phase 13: try/fail error handling ──────────────────────
+
+#[test]
+fn test_e2e_fail_and_try_success() {
+    assert_eq!(
+        compile_and_run(
+            "fn divide(a: i64, b: i64) -> i64 ! str {
+                if b == 0 {
+                    fail \"division by zero\";
+                }
+                a / b
+            }
+            fn run() -> i64 ! str {
+                let x: i64 = try divide(10, 2);
+                print(x);
+                0
+            }
+            fn main() {
+                run();
+            }"
+        ),
+        "5"
+    );
+}
+
+#[test]
+fn test_e2e_try_propagates_error() {
+    assert_eq!(
+        compile_and_run(
+            "fn inner() -> i64 ! str {
+                fail \"bad\";
+            }
+            fn middle() -> i64 ! str {
+                let x: i64 = try inner();
+                print(x);
+                0
+            }
+            fn main() {
+                middle();
+                print(42);
+            }"
+        ),
+        "42"
+    );
+}
+
+#[test]
+fn test_e2e_failable_success_path() {
+    assert_eq!(
+        compile_and_run(
+            "fn safe_div(a: i64, b: i64) -> i64 ! str {
+                if b == 0 {
+                    fail \"nope\";
+                }
+                a / b
+            }
+            fn compute() -> i64 ! str {
+                let a: i64 = try safe_div(20, 4);
+                let b: i64 = try safe_div(10, 2);
+                print(a);
+                print(b);
+                0
+            }
+            fn main() {
+                compute();
+            }"
+        ),
+        "5\n5"
+    );
+}
+
+#[test]
+fn test_e2e_failable_with_defer() {
+    assert_eq!(
+        compile_and_run(
+            "fn risky() -> i64 ! str {
+                defer print(99);
+                fail \"error\";
+            }
+            fn main() {
+                risky();
+                print(1);
+            }"
+        ),
+        "99\n1"
+    );
+}
+
+#[test]
+fn test_e2e_failable_multiple_try() {
+    assert_eq!(
+        compile_and_run(
+            "fn double(x: i64) -> i64 ! str {
+                x * 2
+            }
+            fn chain() -> i64 ! str {
+                let a: i64 = try double(5);
+                let b: i64 = try double(a);
+                print(b);
+                0
+            }
+            fn main() {
+                chain();
+            }"
+        ),
+        "20"
+    );
+}
+
+#[test]
+fn test_e2e_fail_string_message() {
+    assert_eq!(
+        compile_and_run(
+            "fn validate(x: i64) -> i64 ! str {
+                if x < 0 {
+                    fail \"negative\";
+                }
+                x
+            }
+            fn process() -> i64 ! str {
+                let v: i64 = try validate(10);
+                print(v);
+                0
+            }
+            fn main() {
+                process();
+            }"
+        ),
+        "10"
+    );
+}

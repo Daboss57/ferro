@@ -9,6 +9,7 @@ use crate::error::Span;
 pub struct Program {
     pub functions: Vec<Function>,
     pub enums: Vec<EnumDef>,
+    pub structs: Vec<StructDef>,
 }
 
 /// An enum definition: `enum Color { Red, Green, Blue }`
@@ -19,12 +20,30 @@ pub struct EnumDef {
     pub span: Span,
 }
 
+/// A struct definition: `struct Point { x: i64, y: i64 }`
+#[derive(Debug)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<StructField>,
+    pub span: Span,
+}
+
+/// A field in a struct definition.
+#[derive(Debug, Clone)]
+pub struct StructField {
+    pub name: String,
+    pub type_name: String,
+    pub span: Span,
+}
+
 /// A function definition: `fn name(params) -> return_type { body }`
+/// Failable functions: `fn name(params) -> return_type ! str { body }`
 #[derive(Debug)]
 pub struct Function {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Option<String>, // None means no return type (void)
+    pub can_fail: bool,              // true if `-> T ! str`
     pub body: Block,
     pub span: Span,
 }
@@ -68,9 +87,26 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    /// `obj.field = expr;`
+    FieldAssign {
+        object: String,
+        field: String,
+        value: Expr,
+        span: Span,
+    },
     /// `return expr;`
     Return {
         value: Option<Expr>,
+        span: Span,
+    },
+    /// `defer expr;` — runs expr when function returns (LIFO order)
+    Defer {
+        expr: Expr,
+        span: Span,
+    },
+    /// `fail expr;` — return an error from a failable function
+    Fail {
+        message: Expr,
         span: Span,
     },
     /// An expression used as a statement (e.g., a function call: `print(x);`)
@@ -143,7 +179,7 @@ pub enum Pattern {
 }
 
 /// An expression — things that PRODUCE a value.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     /// Integer literal: `42`
     IntLit {
@@ -199,6 +235,23 @@ pub enum Expr {
     EnumVariant {
         enum_name: String,
         variant: String,
+        span: Span,
+    },
+    /// Struct literal: `Point { x: 10, y: 20 }`
+    StructLit {
+        name: String,
+        fields: Vec<(String, Expr)>,
+        span: Span,
+    },
+    /// Field access: `p.x`
+    FieldAccess {
+        object: Box<Expr>,
+        field: String,
+        span: Span,
+    },
+    /// Try expression: `try expr` — unwrap or propagate error
+    Try {
+        expr: Box<Expr>,
         span: Span,
     },
 }

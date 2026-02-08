@@ -1,0 +1,35 @@
+// Structs in Ferro — defining custom data types
+
+struct Point {
+    x: i64,
+    y: i64
+}
+
+struct Rect {
+    width: i64,
+    height: i64
+}
+
+fn area(w: i64, h: i64) -> i64 {
+    w * h
+}
+
+fn main() {
+    // Create a struct
+    let p: Point = Point { x: 10, y: 20 };
+    print(p.x);
+    print(p.y);
+
+    // Modify fields
+    p.x = 99;
+    print(p.x);
+
+    // Use fields in arithmetic
+    let sum: i64 = p.x + p.y;
+    print(sum);
+
+    // Another struct
+    let r: Rect = Rect { width: 5, height: 3 };
+    let a: i64 = area(r.width, r.height);
+    print(a);
+}

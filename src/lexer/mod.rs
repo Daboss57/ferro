@@ -261,11 +261,7 @@ impl Lexer {
                     self.advance();
                     TokenKind::DotDot     // ..
                 } else {
-                    let end = self.current_pos();
-                    return Err(CompileError::new(
-                        "unexpected character '.' (did you mean '..'?)",
-                        Span::new(start, end),
-                    ));
+                    TokenKind::Dot        // .
                 }
             }
 
