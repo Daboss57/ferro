@@ -275,6 +275,12 @@ pub enum Expr {
         expr: Box<Expr>,
         span: Span,
     },
+    /// Type cast: `expr as type` — e.g. `65 as str`, `x as bool`
+    Cast {
+        expr: Box<Expr>,
+        target: String,
+        span: Span,
+    },
 }
 
 /// Binary operators.

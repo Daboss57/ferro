@@ -1859,3 +1859,168 @@ fn test_e2e_contains_in_if() {
 fn test_e2e_to_str_with_len() {
     assert_eq!(compile_and_run("fn main() { print(len(to_str(12345))); }"), "5");
 }
+
+// ── String Concatenation Tests ─────────────────────
+
+#[test]
+fn test_e2e_string_concat_basic() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print("hello" + " world"); }"#),
+        "hello world"
+    );
+}
+
+#[test]
+fn test_e2e_string_concat_variables() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { let a = "foo"; let b = "bar"; print(a + b); }"#),
+        "foobar"
+    );
+}
+
+#[test]
+fn test_e2e_string_concat_chain() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print("a" + "b" + "c"); }"#),
+        "abc"
+    );
+}
+
+#[test]
+fn test_e2e_string_concat_with_empty() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print("hello" + ""); }"#),
+        "hello"
+    );
+}
+
+// ── Char Literal Tests ─────────────────────────────
+
+#[test]
+fn test_e2e_char_literal() {
+    assert_eq!(
+        compile_and_run("fn main() { let c = 'A'; print(c); }"),
+        "65"
+    );
+}
+
+#[test]
+fn test_e2e_char_literal_escape() {
+    // Test '\n' char literal (newline = 10)
+    assert_eq!(
+        compile_and_run(r"fn main() { let c = '\n'; print(c); }"),
+        "10"
+    );
+}
+
+#[test]
+fn test_e2e_char_literal_zero() {
+    assert_eq!(
+        compile_and_run(r"fn main() { let c = '\0'; print(c); }"),
+        "0"
+    );
+}
+
+#[test]
+fn test_e2e_char_in_expression() {
+    assert_eq!(
+        compile_and_run("fn main() { print('A' + 1); }"),
+        "66"
+    );
+}
+
+// ── Type Casting Tests ─────────────────────────────
+
+#[test]
+fn test_e2e_cast_i64_to_bool_true() {
+    assert_eq!(
+        compile_and_run("fn main() { print(42 as bool); }"),
+        "true"
+    );
+}
+
+#[test]
+fn test_e2e_cast_i64_to_bool_false() {
+    assert_eq!(
+        compile_and_run("fn main() { print(0 as bool); }"),
+        "false"
+    );
+}
+
+#[test]
+fn test_e2e_cast_bool_to_i64() {
+    assert_eq!(
+        compile_and_run("fn main() { print(true as i64); }"),
+        "1"
+    );
+}
+
+#[test]
+fn test_e2e_cast_i64_to_str() {
+    assert_eq!(
+        compile_and_run("fn main() { print(42 as str); }"),
+        "42"
+    );
+}
+
+#[test]
+fn test_e2e_cast_str_to_i64() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { let n = "123" as i64; print(n + 1); }"#),
+        "124"
+    );
+}
+
+#[test]
+fn test_e2e_cast_negative_i64_to_str() {
+    assert_eq!(
+        compile_and_run("fn main() { let x = -99; print(x as str); }"),
+        "-99"
+    );
+}
+
+// ── substr Tests ────────────────────────────────────
+
+#[test]
+fn test_e2e_substr_basic() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print(substr("hello world", 6, 5)); }"#),
+        "world"
+    );
+}
+
+#[test]
+fn test_e2e_substr_from_start() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print(substr("abcdef", 0, 3)); }"#),
+        "abc"
+    );
+}
+
+// ── trim Tests ──────────────────────────────────────
+
+#[test]
+fn test_e2e_trim_spaces() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print(trim("  hello  ")); }"#),
+        "hello"
+    );
+}
+
+#[test]
+fn test_e2e_trim_no_whitespace() {
+    assert_eq!(
+        compile_and_run(r#"fn main() { print(trim("hello")); }"#),
+        "hello"
+    );
+}
+
+// ── alloc/free Tests ────────────────────────────────
+
+#[test]
+fn test_e2e_alloc_free() {
+    assert_eq!(
+        compile_and_run("fn main() { let p = alloc(64); let ok = p as bool; free(p); print(ok); }"),
+        "true"
+    );
+}

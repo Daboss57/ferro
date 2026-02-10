@@ -1,4 +1,4 @@
-// Phase 8: Arrays & Modulo demo
+let x: i64 = "hello";
 
 fn main() {
     // Array literal

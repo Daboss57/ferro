@@ -1,0 +1,33 @@
+// guessing_game.ferro — Simple number guessing game using Ferro stdlib
+// Uses: rand, read_line, parse_int, try/fail, string concat, type casting, loops
+
+fn main() -> i64 ! str {
+    // Pick a "random" target (1-100)
+    let target = rand() % 100 + 1;
+
+    print("I'm thinking of a number between 1 and 100.");
+    print("Can you guess it?");
+
+    let mut attempts = 0;
+    let mut done = false;
+
+    while !done {
+        print("Enter your guess:");
+        let input = trim(read_line());
+        let guess = try parse_int(input);
+        attempts = attempts + 1;
+
+        if guess == target {
+            print("Correct! You got it in " + to_str(attempts) + " attempts!");
+            done = true;
+        } else {
+            if guess < target {
+                print("Too low! Try again.");
+            } else {
+                print("Too high! Try again.");
+            }
+        }
+    }
+
+    0
+}

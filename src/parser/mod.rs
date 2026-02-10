@@ -734,6 +734,19 @@ impl Parser {
                 continue;
             }
 
+            // Postfix: type cast `expr as type`
+            if *self.peek() == TokenKind::As {
+                let start_span = lhs.span();
+                self.advance(); // eat `as`
+                let (target, end_span) = self.expect_ident()?;
+                lhs = Expr::Cast {
+                    expr: Box::new(lhs),
+                    target,
+                    span: Span::new(start_span.start, end_span.end),
+                };
+                continue;
+            }
+
             // Special case: pipe operator |>
             // Desugars: `a |> f` → `f(a)`, `a |> f(b, c)` → `f(a, b, c)`
             if *self.peek() == TokenKind::PipeArrow {
@@ -983,7 +996,8 @@ impl Expr {
             | Expr::EnumVariant { span, .. }
             | Expr::StructLit { span, .. }
             | Expr::FieldAccess { span, .. }
-            | Expr::Try { span, .. } => *span,
+            | Expr::Try { span, .. }
+            | Expr::Cast { span, .. } => *span,
         }
     }
 }

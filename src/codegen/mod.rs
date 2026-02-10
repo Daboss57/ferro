@@ -133,8 +133,12 @@ impl Codegen {
                 UnaryOp::Neg => ValType::Int,
                 UnaryOp::Not => ValType::Bool,
             },
-            Expr::BinaryOp { op, .. } => match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => ValType::Int,
+            Expr::BinaryOp { op, left, .. } => match op {
+                BinOp::Add => {
+                    // String concat returns Str, integer add returns Int
+                    if self.infer_type(left) == ValType::Str { ValType::Str } else { ValType::Int }
+                }
+                BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => ValType::Int,
                 _ => ValType::Bool,
             },
             Expr::Call { name, .. } => {
@@ -174,6 +178,9 @@ impl Codegen {
             Expr::Try { expr, .. } => {
                 // try unwraps a failable call — same type as the call's return
                 self.infer_type(expr)
+            }
+            Expr::Cast { target, .. } => {
+                Self::valtype_from_name(target)
             }
         }
     }
@@ -281,6 +288,10 @@ impl Codegen {
         self.func_return_types.insert("exit".to_string(), ValType::Void);
         self.func_return_types.insert("time".to_string(), ValType::Int);
         self.func_return_types.insert("sleep".to_string(), ValType::Void);
+        self.func_return_types.insert("substr".to_string(), ValType::Str);
+        self.func_return_types.insert("trim".to_string(), ValType::Str);
+        self.func_return_types.insert("alloc".to_string(), ValType::Int);
+        self.func_return_types.insert("free".to_string(), ValType::Void);
         // Register failable builtins
         self.failable_funcs.insert("parse_int".to_string(), true);
         self.failable_funcs.insert("read_file".to_string(), true);
@@ -471,6 +482,136 @@ impl Codegen {
         self.emit("xorl %edx, %edx");
 
         self.emit_label(".Lwf_done");
+        self.emit("movq %rbp, %rsp");
+        self.emit("popq %rbp");
+        self.emit("ret");
+        writeln!(self.output).unwrap();
+
+        // __ferro_str_concat(left: RCX, right: RDX) -> RAX = new malloc'd string
+        writeln!(self.output, "__ferro_str_concat:").unwrap();
+        self.emit("pushq %rbp");
+        self.emit("movq %rsp, %rbp");
+        self.emit("subq $48, %rsp");
+        self.emit("movq %rcx, -8(%rbp)");  // save left
+        self.emit("movq %rdx, -16(%rbp)"); // save right
+        // strlen(left)
+        self.emit("call strlen");
+        self.emit("movq %rax, -24(%rbp)"); // save left_len
+        // strlen(right)
+        self.emit("movq -16(%rbp), %rcx");
+        self.emit("call strlen");
+        self.emit("movq %rax, -32(%rbp)"); // save right_len
+        // malloc(left_len + right_len + 1)
+        self.emit("movq -24(%rbp), %rcx");
+        self.emit("addq %rax, %rcx");
+        self.emit("incq %rcx");
+        self.emit("call malloc");
+        self.emit("movq %rax, -40(%rbp)"); // save buffer
+        // strcpy(buf, left)
+        self.emit("movq %rax, %rcx");
+        self.emit("movq -8(%rbp), %rdx");
+        self.emit("call strcpy");
+        // strcat(buf, right)
+        self.emit("movq -40(%rbp), %rcx");
+        self.emit("movq -16(%rbp), %rdx");
+        self.emit("call strcat");
+        // return buffer
+        self.emit("movq -40(%rbp), %rax");
+        self.emit("movq %rbp, %rsp");
+        self.emit("popq %rbp");
+        self.emit("ret");
+        writeln!(self.output).unwrap();
+
+        // __ferro_substr(s: RCX, start: RDX, len: R8) -> RAX = new malloc'd substring
+        writeln!(self.output, "__ferro_substr:").unwrap();
+        self.emit("pushq %rbp");
+        self.emit("movq %rsp, %rbp");
+        self.emit("subq $48, %rsp");
+        self.emit("movq %rcx, -8(%rbp)");  // save s
+        self.emit("movq %rdx, -16(%rbp)"); // save start
+        self.emit("movq %r8, -24(%rbp)");  // save len
+        // malloc(len + 1)
+        self.emit("movq %r8, %rcx");
+        self.emit("incq %rcx");
+        self.emit("call malloc");
+        self.emit("movq %rax, -32(%rbp)"); // save buffer
+        // memcpy(buf, s + start, len)
+        self.emit("movq %rax, %rcx");           // dest
+        self.emit("movq -8(%rbp), %rdx");
+        self.emit("addq -16(%rbp), %rdx");       // src = s + start
+        self.emit("movq -24(%rbp), %r8");         // count = len
+        self.emit("call memcpy");
+        // null-terminate
+        self.emit("movq -32(%rbp), %rax");
+        self.emit("movq -24(%rbp), %rcx");
+        self.emit("movb $0, (%rax,%rcx,1)");
+        self.emit("movq %rbp, %rsp");
+        self.emit("popq %rbp");
+        self.emit("ret");
+        writeln!(self.output).unwrap();
+
+        // __ferro_trim(s: RCX) -> RAX = new malloc'd trimmed string
+        writeln!(self.output, "__ferro_trim:").unwrap();
+        self.emit("pushq %rbp");
+        self.emit("movq %rsp, %rbp");
+        self.emit("subq $48, %rsp");
+        self.emit("movq %rcx, -8(%rbp)");  // save s
+        // skip leading whitespace
+        self.emit_label(".Ltrim_lskip");
+        self.emit("movzbl (%rcx), %eax");
+        self.emit("cmpb $32, %al");   // space
+        self.emit("je .Ltrim_lnext");
+        self.emit("cmpb $9, %al");    // tab
+        self.emit("je .Ltrim_lnext");
+        self.emit("cmpb $10, %al");   // newline
+        self.emit("je .Ltrim_lnext");
+        self.emit("cmpb $13, %al");   // carriage return
+        self.emit("je .Ltrim_lnext");
+        self.emit("jmp .Ltrim_ldone");
+        self.emit_label(".Ltrim_lnext");
+        self.emit("incq %rcx");
+        self.emit("jmp .Ltrim_lskip");
+        self.emit_label(".Ltrim_ldone");
+        self.emit("movq %rcx, -16(%rbp)"); // save start ptr
+        // strlen(start)
+        self.emit("call strlen");
+        self.emit("movq %rax, -24(%rbp)"); // save length
+        // find end (skip trailing whitespace)
+        self.emit("movq -16(%rbp), %rcx");
+        self.emit("addq %rax, %rcx");       // end ptr
+        self.emit_label(".Ltrim_rskip");
+        self.emit("cmpq -16(%rbp), %rcx");
+        self.emit("jle .Ltrim_rdone");
+        self.emit("movzbl -1(%rcx), %eax");
+        self.emit("cmpb $32, %al");
+        self.emit("je .Ltrim_rnext");
+        self.emit("cmpb $9, %al");
+        self.emit("je .Ltrim_rnext");
+        self.emit("cmpb $10, %al");
+        self.emit("je .Ltrim_rnext");
+        self.emit("cmpb $13, %al");
+        self.emit("je .Ltrim_rnext");
+        self.emit("jmp .Ltrim_rdone");
+        self.emit_label(".Ltrim_rnext");
+        self.emit("decq %rcx");
+        self.emit("jmp .Ltrim_rskip");
+        self.emit_label(".Ltrim_rdone");
+        // length = end - start
+        self.emit("subq -16(%rbp), %rcx");
+        self.emit("movq %rcx, -24(%rbp)"); // trimmed length
+        // malloc(len + 1)
+        self.emit("incq %rcx");
+        self.emit("call malloc");
+        self.emit("movq %rax, -32(%rbp)"); // save buffer
+        // memcpy(buf, start, len)
+        self.emit("movq %rax, %rcx");
+        self.emit("movq -16(%rbp), %rdx");
+        self.emit("movq -24(%rbp), %r8");
+        self.emit("call memcpy");
+        // null-terminate
+        self.emit("movq -32(%rbp), %rax");
+        self.emit("movq -24(%rbp), %rcx");
+        self.emit("movb $0, (%rax,%rcx,1)");
         self.emit("movq %rbp, %rsp");
         self.emit("popq %rbp");
         self.emit("ret");
@@ -816,6 +957,20 @@ impl Codegen {
             }
 
             Expr::BinaryOp { op, left, right, .. } => {
+                // String concatenation: "hello" + " world"
+                if *op == BinOp::Add && self.infer_type(left) == ValType::Str {
+                    self.gen_expr(left);
+                    self.emit("pushq %rax");     // save left string ptr
+                    self.gen_expr(right);
+                    self.emit("movq %rax, %rdx"); // right string in RDX
+                    self.emit("popq %rcx");       // left string in RCX
+                    // Call __ferro_str_concat(left, right) -> RAX = new string
+                    self.emit("subq $32, %rsp");
+                    self.emit("call __ferro_str_concat");
+                    self.emit("addq $32, %rsp");
+                    return;
+                }
+
                 // Evaluate left → RAX → push onto stack
                 self.gen_expr(left);
                 self.emit("pushq %rax");
@@ -1227,6 +1382,49 @@ impl Codegen {
                     return;
                 }
 
+                // ── substr(s, start, len) ──────────────
+                if name == "substr" {
+                    // Evaluate args: s, start, len
+                    self.gen_expr(&args[0]);
+                    self.emit("pushq %rax");
+                    self.gen_expr(&args[1]);
+                    self.emit("pushq %rax");
+                    self.gen_expr(&args[2]);
+                    self.emit("movq %rax, %r8");    // len in R8
+                    self.emit("popq %rdx");          // start in RDX
+                    self.emit("popq %rcx");          // s in RCX
+                    self.emit("subq $32, %rsp");
+                    self.emit("call __ferro_substr");
+                    self.emit("addq $32, %rsp");
+                    return;
+                }
+
+                // ── trim(s) ────────────────────────────
+                if name == "trim" {
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx");
+                    self.emit("subq $32, %rsp");
+                    self.emit("call __ferro_trim");
+                    self.emit("addq $32, %rsp");
+                    return;
+                }
+
+                // ── alloc(size) → malloc ───────────────
+                if name == "alloc" {
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx");
+                    self.emit("call malloc");
+                    return;
+                }
+
+                // ── free(ptr) → free ───────────────────
+                if name == "free" {
+                    self.gen_expr(&args[0]);
+                    self.emit("movq %rax, %rcx");
+                    self.emit("call free");
+                    return;
+                }
+
                 // General function call
                 let arg_regs = ["%rcx", "%rdx", "%r8", "%r9"];
 
@@ -1309,6 +1507,48 @@ impl Codegen {
                 self.emit("ret");
                 // Success path: RAX has the unwrapped value
                 self.emit_label(&ok_label);
+            }
+
+            Expr::Cast { expr, target, .. } => {
+                self.gen_expr(expr);
+                let from = self.infer_type(expr);
+                match (from, target.as_str()) {
+                    // i64 → bool: 0=false, nonzero=true
+                    (ValType::Int, "bool") => {
+                        self.emit("testq %rax, %rax");
+                        self.emit("setne %al");
+                        self.emit("movzbq %al, %rax");
+                    }
+                    // bool → i64: already 0 or 1, no-op
+                    (ValType::Bool, "i64") => {}
+                    // i64 → str: malloc buffer + sprintf
+                    (ValType::Int, "str") => {
+                        self.emit("pushq %rax");  // save value at (%rsp)
+                        // malloc(24) — enough for i64 as string
+                        self.emit("movq $24, %rcx");
+                        self.emit("subq $32, %rsp"); // shadow space for malloc
+                        self.emit("call malloc");
+                        self.emit("addq $32, %rsp");
+                        // RAX = buf ptr, (%rsp) = original value
+                        self.emit("pushq %rax");      // save buf ptr at (%rsp), value at 8(%rsp)
+                        self.emit("movq %rax, %rcx"); // buf in RCX (arg 1)
+                        let fmt_idx = self.string_literals.len();
+                        self.string_literals.push("%lld".to_string());
+                        self.emit(&format!("leaq .Lstr_{}(%rip), %rdx", fmt_idx));
+                        self.emit("movq 8(%rsp), %r8"); // original i64 value
+                        self.emit("subq $32, %rsp");
+                        self.emit("call sprintf");
+                        self.emit("addq $32, %rsp");
+                        self.emit("popq %rax");   // buf ptr = result
+                        self.emit("addq $8, %rsp"); // discard saved value
+                    }
+                    // str → i64: atoll
+                    (ValType::Str, "i64") => {
+                        self.emit("movq %rax, %rcx");
+                        self.emit("call atoll");
+                    }
+                    _ => {} // other casts — no-op (sema already validated)
+                }
             }
         }
     }

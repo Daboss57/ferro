@@ -30,6 +30,7 @@ pub enum TokenKind {
     Comptime, // comptime
     Import,   // import
     Priv,     // priv
+    As,       // as
     Return,   // return
     True,     // true
     False,    // false
@@ -101,6 +102,7 @@ pub fn lookup_keyword(word: &str) -> Option<TokenKind> {
         "comptime" => Some(TokenKind::Comptime),
         "import"   => Some(TokenKind::Import),
         "priv"     => Some(TokenKind::Priv),
+        "as"       => Some(TokenKind::As),
         "return"   => Some(TokenKind::Return),
         "true"     => Some(TokenKind::True),
         "false"    => Some(TokenKind::False),

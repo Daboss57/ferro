@@ -1,0 +1,58 @@
+// stdlib_demo.ferro — Showcases Ferro's built-in functions and new features
+
+fn main() {
+    // ── String concatenation ────────────────
+    let greeting = "Hello" + ", " + "World!";
+    print(greeting);
+
+    // ── Char literals ───────────────────────
+    let letter = 'A';
+    print(letter);            // 65 (ASCII value)
+    print(char_at("Hello", 0)); // 72 (ASCII for 'H')
+
+    // ── Type casting ────────────────────────
+    let num = 42;
+    let s = num as str;
+    print("42 as str: " + s);
+
+    let parsed = "999" as i64;
+    print(parsed + 1);       // 1000
+
+    let truthy = 1 as bool;
+    print(truthy);            // true
+
+    let falsy = 0 as bool;
+    print(falsy);             // false
+
+    let back = true as i64;
+    print(back);              // 1
+
+    // ── Math builtins ───────────────────────
+    print(abs(-42));          // 42
+    print(min(10, 20));       // 10
+    print(max(10, 20));       // 20
+    print(pow(2, 10));        // 1024
+
+    // ── String builtins ─────────────────────
+    let msg = "Hello, Ferro!";
+    print(len(msg));                    // 13
+    print(contains(msg, "Ferro"));      // true
+    print(starts_with(msg, "Hello"));   // true
+    print(substr(msg, 7, 5));           // Ferro
+    print(trim("  spaces  "));          // spaces
+    print(to_str(42));                  // 42
+
+    // ── I/O builtins ────────────────────────
+    print(file_exists("Cargo.toml"));   // true (we're in the project root)
+
+    // ── Memory builtins ─────────────────────
+    let ptr = alloc(128);
+    print(ptr as bool);       // true (non-null)
+    free(ptr);
+
+    // ── System builtins ─────────────────────
+    let t = time();
+    print(t as bool);         // true (time > 0)
+
+    print("Done!");
+}

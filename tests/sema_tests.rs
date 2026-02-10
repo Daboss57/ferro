@@ -335,8 +335,9 @@ fn test_string_type_mismatch() {
 
 #[test]
 fn test_string_arithmetic_error() {
+    // str + str is now valid (string concat), but str - str should error
     check_err(
-        r#"fn main() { let x: str = "a" + "b"; }"#,
+        r#"fn main() { let x: str = "a" - "b"; }"#,
         "cannot apply",
     );
 }
@@ -992,4 +993,75 @@ fn test_min_wrong_arg_count() {
 #[test]
 fn test_abs_wrong_arg_count() {
     check_err("fn main() { abs(1, 2); }", "takes 1 argument(s), got 2");
+}
+
+// ── String Concat Sema Tests ───────────────────────
+
+#[test]
+fn test_string_concat_valid() {
+    check_ok(r#"fn main() { let s: str = "a" + "b"; }"#);
+}
+
+#[test]
+fn test_string_plus_int_error() {
+    check_err(r#"fn main() { "a" + 1; }"#, "cannot apply");
+}
+
+// ── Type Cast Sema Tests ───────────────────────────
+
+#[test]
+fn test_cast_i64_to_bool_valid() {
+    check_ok("fn main() { let b: bool = 42 as bool; }");
+}
+
+#[test]
+fn test_cast_bool_to_i64_valid() {
+    check_ok("fn main() { let n: i64 = true as i64; }");
+}
+
+#[test]
+fn test_cast_i64_to_str_valid() {
+    check_ok("fn main() { let s: str = 42 as str; }");
+}
+
+#[test]
+fn test_cast_str_to_i64_valid() {
+    check_ok(r#"fn main() { let n: i64 = "42" as i64; }"#);
+}
+
+#[test]
+fn test_cast_str_to_bool_error() {
+    check_err(r#"fn main() { "hello" as bool; }"#, "cannot cast");
+}
+
+#[test]
+fn test_cast_bool_to_str_error() {
+    check_err("fn main() { true as str; }", "cannot cast");
+}
+
+// ── New Builtin Sema Tests ─────────────────────────
+
+#[test]
+fn test_substr_valid() {
+    check_ok(r#"fn main() { let s: str = substr("hello", 0, 3); }"#);
+}
+
+#[test]
+fn test_substr_wrong_types() {
+    check_err(r#"fn main() { substr(42, 0, 3); }"#, "expected 'str', got 'i64'");
+}
+
+#[test]
+fn test_trim_valid() {
+    check_ok(r#"fn main() { let s: str = trim("  hi  "); }"#);
+}
+
+#[test]
+fn test_alloc_valid() {
+    check_ok("fn main() { let p: i64 = alloc(64); }");
+}
+
+#[test]
+fn test_free_valid() {
+    check_ok("fn main() { let p = alloc(64); free(p); }");
 }

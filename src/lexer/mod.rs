@@ -198,6 +198,60 @@ impl Lexer {
         }
     }
 
+    /// Read a char literal: 'A' → IntLit(65). Supports escape sequences.
+    fn read_char(&mut self, start: Pos) -> Result<Token, CompileError> {
+        let ch = match self.advance() {
+            Some('\\') => {
+                // Escape sequence
+                match self.advance() {
+                    Some('n') => '\n',
+                    Some('t') => '\t',
+                    Some('\\') => '\\',
+                    Some('\'') => '\'',
+                    Some('0') => '\0',
+                    Some(c) => {
+                        let end = self.current_pos();
+                        return Err(CompileError::new(
+                            format!("unknown escape sequence '\\{}'", c),
+                            Span::new(start, end),
+                        ));
+                    }
+                    None => {
+                        let end = self.current_pos();
+                        return Err(CompileError::new(
+                            "unexpected end of file in char literal",
+                            Span::new(start, end),
+                        ));
+                    }
+                }
+            }
+            Some(c) => c,
+            None => {
+                let end = self.current_pos();
+                return Err(CompileError::new(
+                    "unexpected end of file in char literal",
+                    Span::new(start, end),
+                ));
+            }
+        };
+        // Expect closing quote
+        match self.advance() {
+            Some('\'') => {}
+            _ => {
+                let end = self.current_pos();
+                return Err(CompileError::new(
+                    "unterminated char literal (expected closing ')",
+                    Span::new(start, end),
+                ));
+            }
+        }
+        let end = self.current_pos();
+        Ok(Token {
+            kind: TokenKind::Int(ch as i64),
+            span: Span::new(start, end),
+        })
+    }
+
     // -- Main tokenizer --
 
     /// Read the next token from the source.
@@ -231,6 +285,12 @@ impl Lexer {
         if ch == '"' {
             self.advance(); // consume opening quote
             return self.read_string(start);
+        }
+
+        // Char literals: 'A' → IntLit(65)
+        if ch == '\'' {
+            self.advance(); // consume opening quote
+            return self.read_char(start);
         }
 
         // Operators and punctuation

@@ -319,6 +319,12 @@ impl Checker {
         self.functions.insert("starts_with".to_string(), FuncInfo {
             param_types: vec![Type::Str, Type::Str], return_type: Type::Bool, can_fail: false,
         });
+        self.functions.insert("substr".to_string(), FuncInfo {
+            param_types: vec![Type::Str, Type::I64, Type::I64], return_type: Type::Str, can_fail: false,
+        });
+        self.functions.insert("trim".to_string(), FuncInfo {
+            param_types: vec![Type::Str], return_type: Type::Str, can_fail: false,
+        });
 
         // ── I/O builtins ─────────────────────────────────
         self.functions.insert("read_line".to_string(), FuncInfo {
@@ -345,6 +351,14 @@ impl Checker {
             param_types: vec![], return_type: Type::I64, can_fail: false,
         });
         self.functions.insert("sleep".to_string(), FuncInfo {
+            param_types: vec![Type::I64], return_type: Type::Void, can_fail: false,
+        });
+
+        // ── Memory builtins ─────────────────────────────
+        self.functions.insert("alloc".to_string(), FuncInfo {
+            param_types: vec![Type::I64], return_type: Type::I64, can_fail: false,
+        });
+        self.functions.insert("free".to_string(), FuncInfo {
             param_types: vec![Type::I64], return_type: Type::Void, can_fail: false,
         });
 
@@ -762,8 +776,23 @@ impl Checker {
                 let right_ty = self.check_expr(right)?;
 
                 match op {
-                    // Arithmetic: i64 op i64 -> i64
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                    // Arithmetic: i64 op i64 -> i64 (Add also supports str + str)
+                    BinOp::Add => {
+                        if left_ty == Type::Str && right_ty == Type::Str {
+                            return Ok(Type::Str); // string concatenation
+                        }
+                        if left_ty != Type::I64 || right_ty != Type::I64 {
+                            return Err(CompileError::new(
+                                format!(
+                                    "cannot apply '{:?}' to '{}' and '{}'",
+                                    op, left_ty, right_ty
+                                ),
+                                *span,
+                            ));
+                        }
+                        Ok(Type::I64)
+                    }
+                    BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                         if left_ty != Type::I64 || right_ty != Type::I64 {
                             return Err(CompileError::new(
                                 format!(
@@ -1068,6 +1097,34 @@ impl Checker {
                         *span,
                     ))
                 }
+            }
+
+            Expr::Cast { expr, target, span } => {
+                let from_ty = self.check_expr(expr)?;
+                let to_ty = match Type::from_name(target) {
+                    Some(t) => t,
+                    None => {
+                        return Err(CompileError::new(
+                            format!("unknown cast target type '{}'", target),
+                            *span,
+                        ));
+                    }
+                };
+                // Allowed casts: i64→str, i64→bool, bool→i64, str→i64
+                let valid = matches!(
+                    (&from_ty, &to_ty),
+                    (Type::I64, Type::Str)
+                    | (Type::I64, Type::Bool)
+                    | (Type::Bool, Type::I64)
+                    | (Type::Str, Type::I64)
+                );
+                if !valid {
+                    return Err(CompileError::new(
+                        format!("cannot cast '{}' to '{}'", from_ty, to_ty),
+                        *span,
+                    ));
+                }
+                Ok(to_ty)
             }
         }
     }

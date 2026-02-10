@@ -1,0 +1,52 @@
+{
+    "name": "ferro-lang",
+    "displayName": "Ferro Language",
+    "description": "Syntax highlighting and real-time error checking for the Ferro programming language",
+    "version": "0.1.0",
+    "publisher": "ferro",
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "categories": ["Programming Languages"],
+    "activationEvents": [
+        "onLanguage:ferro"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [{
+            "id": "ferro",
+            "aliases": ["Ferro", "ferro"],
+            "extensions": [".ferro"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "ferro",
+            "scopeName": "source.ferro",
+            "path": "./syntaxes/ferro.tmLanguage.json"
+        }],
+        "configuration": {
+            "title": "Ferro",
+            "properties": {
+                "ferro.compilerPath": {
+                    "type": "string",
+                    "default": "ferro",
+                    "description": "Path to the Ferro compiler executable"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "package": "npx @vscode/vsce package"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^9.0.1"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.80.0",
+        "@types/node": "^20.0.0",
+        "typescript": "^5.3.0",
+        "@vscode/vsce": "^2.22.0"
+    }
+}

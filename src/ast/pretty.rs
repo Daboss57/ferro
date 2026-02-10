@@ -305,5 +305,10 @@ fn print_expr(out: &mut String, expr: &Expr) {
             out.push_str("try ");
             print_expr(out, expr);
         }
+        Expr::Cast { expr, target, .. } => {
+            print_expr(out, expr);
+            out.push_str(" as ");
+            out.push_str(target);
+        }
     }
 }
